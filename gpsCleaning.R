@@ -118,11 +118,11 @@ analytics_clean <- analytics_clean %>%
   )
 
 # add a new column called analytics to differentiate the two for further analysis
-gps <- gps %>%
+gps2 <- gps %>%
   mutate(analytics = 0)  
 
 # Combine `gps` and `analytics_clean` into one dataset
-gps_with_analytics <- rbind(gps, analytics_clean)
+gps_with_analytics <- rbind(gps2, analytics_clean)
 
 # order rows by participant IDs and measured at time stamps
 gps_with_analytics <- gps_with_analytics[with(gps_with_analytics, order(participantid, measuredat)),]
@@ -155,7 +155,7 @@ database_connection <- dbConnect(
 
 # Change the format of gps so that it's compatible with PSQL
 # We will switch it back to the original format during feature engineering
-gps_cleaned <- gps %>%
+gps_PSQL <- gps %>%
   mutate(
     participantid = as.character(participantid),
     measuredat = as.POSIXct(measuredat, origin = "1970-01-01", tz = "UTC"),
@@ -172,7 +172,7 @@ gps_cleaned <- gps %>%
 dbAppendTable(
   conn = database_connection, 
   name = Id(schema = "user1_workspace", name = "gps_v1"), 
-  value = gps_cleaned
+  value = gps_PSQL
 )
 
 # 
