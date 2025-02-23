@@ -140,63 +140,39 @@ gps_with_analytics <- gps_with_analytics[!duplicated(gps_with_analytics[c(1:9)])
 # under the user1_workspace schema, then uploaded the dataframes from R into PSQL
 # Skip or edit details for your personal database 
 
-library(RPostgres)  
-
-# personal details
-database_connection <- dbConnect(
-  RPostgres::Postgres(),  # RPostgres instead of PostgreSQL()!!!
-  dbname = Sys.getenv("PSQL_DB"),
-  host = Sys.getenv("PSQL_HOST"),   
-  port = 5432,  
-  user = Sys.getenv("PSQL_USER"),
-  password = Sys.getenv("PSQL_PASSWORD")
-)
-
-
 # Change the format of gps so that it's compatible with PSQL
 # We will switch it back to the original format during feature engineering
-gps_PSQL <- gps %>%
-  mutate(
-    participantid = as.character(participantid),
-    measuredat = as.POSIXct(measuredat, origin = "1970-01-01", tz = "UTC"),
-    uploadedat = as.POSIXct(uploadedat, origin = "1970-01-01", tz = "UTC"),
-    measuredat_local = as.POSIXct(measuredat_local, origin = "1970-01-01", tz = "UTC"),
-    value0 = as.character(value0),  # Add this if value0 exists
-    lat = as.numeric(lat),
-    lon = as.numeric(lon),
-    timezone_difference = as.integer(timezone_difference)
-  )
+#gps_PSQL <- gps %>%
+#  mutate(
+#    participantid = as.character(participantid),
+#    measuredat = as.POSIXct(measuredat, origin = "1970-01-01", tz = "UTC"),
+#    uploadedat = as.POSIXct(uploadedat, origin = "1970-01-01", tz = "UTC"),
+#    measuredat_local = as.POSIXct(measuredat_local, origin = "1970-01-01", tz = "UTC"),
+#    value0 = as.character(value0),  # Add this if value0 exists
+#    lat = as.numeric(lat),
+#    lon = as.numeric(lon),
+#    timezone_difference = as.integer(timezone_difference)
+#  )
 
 
-# save gps only data as gps_v1 into the PSQL database
-dbAppendTable(
-  conn = database_connection, 
-  name = Id(schema = "user1_workspace", name = "gps_v1"), 
-  value = gps_PSQL
-)
+#append_to_db(gps_PSQL, "user1_workspace", "gps_v1")
+
 
 # 
-gps_with_analytics <- gps_with_analytics %>%
-  mutate(
-    participantid = as.character(participantid),
-    measuredat = as.POSIXct(measuredat, origin = "1970-01-01", tz = "UTC"),
-    uploadedat = as.POSIXct(uploadedat, origin = "1970-01-01", tz = "UTC"),
-    measuredat_local = as.POSIXct(measuredat_local, origin = "1970-01-01", tz = "UTC"),
-    value0 = as.character(value0),
-    lat = as.numeric(lat),
-    lon = as.numeric(lon),
-    timezone_difference = as.integer(timezone_difference),  
-    analytics = as.integer(analytics)  
-  )
+#gps_with_analytics <- gps_with_analytics %>%
+#  mutate(
+#    participantid = as.character(participantid),
+#    measuredat = as.POSIXct(measuredat, origin = "1970-01-01", tz = "UTC"),
+#    uploadedat = as.POSIXct(uploadedat, origin = "1970-01-01", tz = "UTC"),
+#    measuredat_local = as.POSIXct(measuredat_local, origin = "1970-01-01", tz = "UTC"),
+#    value0 = as.character(value0),
+#    lat = as.numeric(lat),
+#    lon = as.numeric(lon),
+#    timezone_difference = as.integer(timezone_difference),  
+#    analytics = as.integer(analytics)  
+#  )
 
-
-
-dbAppendTable(
-  conn = database_connection, 
-  name = Id(schema = "user1_workspace", name = "gps_with_analytics"), 
-  value = gps_with_analytics
-)
-
+#append_to_db(gps_with_analytics, "user1_workspace", "gps_with_analytics")
 
 ###############################################################################
 
