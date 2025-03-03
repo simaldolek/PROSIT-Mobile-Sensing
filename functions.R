@@ -24,6 +24,15 @@ library(RPostgres)
 ##### Functions for Database Connection (used in every subsequent script) #####
 ###############################################################################
 
+# personal details
+database_connection <- dbConnect(
+  RPostgres::Postgres(),  # RPostgres instead of PostgreSQL()!!!
+  dbname = Sys.getenv("PSQL_DB"),
+  host = Sys.getenv("PSQL_HOST"),   
+  port = 5432,  
+  user = Sys.getenv("PSQL_USER"),
+  password = Sys.getenv("PSQL_PASSWORD")
+)
 
 # This function connects to the database 
 connect_to_prosit_database <- function() {
@@ -94,7 +103,7 @@ append_to_db <- function(data, schema, table) {
 
 
 ###############################################################################
-####################### Functions for gpsCleaning.R ###########################
+####################### Functions for GPS.R ###########################
 ###############################################################################
 library(lutz)    # Provides tz_lookup_coords()
 library(sftime)  # Provides tz_offset()
@@ -126,5 +135,43 @@ extract_longitude <- function(input) {
   }
   return(as.numeric(parts[2]))
 }
+
+
+
+###############################################################################
+####################### Functions for screenTime.R ###########################
+###############################################################################
+
+# This function fetches timezone for each measuredat_1 in the screen time data
+# finds the timezone of a given measuredat_1 - participantid combo, 
+# assigns the timezone for that specific combo under a new column called timezone
+# if there isn't an exact 
+assign_timezone <- function(pid, time) {
+  relevant_intervals <- LookUpTimezone %>% filter(participantid == pid)
+  
+  # Check if there is an exact interval match
+  match <- relevant_intervals %>% filter(time >= start_time & time <= end_time)
+  
+  if (nrow(match) > 0) {
+    return(match$timezone_id[1])
+  } else {
+    # If no match, find the closest interval
+    relevant_intervals <- relevant_intervals %>%
+      mutate(
+        time_diff = pmin(abs(difftime(time, start_time, units = "secs")),
+                         abs(difftime(time, end_time, units = "secs")))
+      )
+    
+    closest <- relevant_intervals %>% arrange(time_diff) %>% slice(1)
+    return(closest$timezone_id[1])
+  }
+}
+
+
+
+
+
+
+
 
 

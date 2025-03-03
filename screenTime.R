@@ -28,16 +28,19 @@ AnalyticsDataiOS <- query_database(query)
 query <- "SELECT * FROM study_prositsm.powerstate ORDER BY measuredat ASC;"
 PowerStateAnd <- query_database(query)
 
+# extract the timezone lookup table
+query <- "SELECT * FROM study_prositsm.lookup_timezone;"
+LookUpTimezone<- query_database(query)
 
 ################################################################################
 ################################## iOS #########################################
 ################################################################################
 
 # filter out the "Terminating" values from analytics
-test2 <- filter(AnalyticsDataiOS, value0 == "Terminating")
+terminating <- filter(AnalyticsDataiOS, value0 == "Terminating")
 
 # attach analytics data frame at the end of lock state data frame
-LockStateiOS <- rbind(LockStateiOS, test2)
+LockStateiOS <- rbind(LockStateiOS, terminating)
 
 # remove the duplicated rows from the data frame
 LockStateiOS <- LockStateiOS[!duplicated(LockStateiOS[c(1:5)]), ]
@@ -86,8 +89,6 @@ LockStateiOS$timescreen <-ifelse(LockStateiOS$value == "UNLOCKED" & LockStateiOS
 # expect a median of zero and a lower mean than the actual mean
 summary(LockStateiOS$timescreen)
 
-
-
 # filter out any episode duration longer than 10 hrs
 test<-filter(LockStateiOS, timescreen  >36000 )
 
@@ -114,37 +115,267 @@ summary(LockStateiOS$timescreen)
 # filter out the incorrect episodes (these are episodes that are 0 seconds long)
 LockStateiOS <- filter(LockStateiOS, timescreen != 0)
 
+
+
+################################################################################
+############### Import Local Timzeones from Timezone_Lookup Table ##############
+################################################################################
+
+# Convert datetime columns to POSIXct for comparison
+LockStateiOS <- LockStateiOS %>%
+  mutate(measuredat_1 = as.POSIXct(measuredat_1, format = "%Y-%m-%d %H:%M:%S", tz = "UTC"))
+
+LookUpTimezone <- LookUpTimezone %>%
+  mutate(
+    start_time = as.POSIXct(start_time, format = "%Y-%m-%d %H:%M:%S", tz = "UTC"),
+    end_time = as.POSIXct(end_time, format = "%Y-%m-%d %H:%M:%S", tz = "UTC")
+  )
+
+# Apply function to LockStateiOS
+LockStateiOS <- LockStateiOS %>%
+  rowwise() %>%
+  mutate(timezone = assign_timezone(participantid, measuredat_1)) %>%
+  ungroup()
+
+
+# Compute timezone offset based on timezones
+# save under a new column "timezone_difference"
+LockStateiOS$timezone_difference <- sapply(1:nrow(LockStateiOS), function(i) {
+  tz <- LockStateiOS$timezone[i]
+  dt <- LockStateiOS$measuredat_1[i]
+  
+  if (is.na(tz)) {
+    return(NA_real_)  # NA timezones are automatically NA
+  }
+  
+  return(tz_offset(as.POSIXct(dt), tz = tz)$utc_offset_h)
+})
+
+
+# Calculate measuredat_local by adding computed offset to UTC
+LockStateiOS <- LockStateiOS %>%
+  mutate(measuredat_local = measuredat_1 + as.difftime(timezone_difference, units = "hours"))
+
+
 # keep only necessary rows
 cleanLockStateiOS <- LockStateiOS %>%
-  select(participantid, measuredat_1, DateNumber, timescreen)
+  select(participantid, measuredat_1, DateNumber, measuredat_local, timescreen)
 
-# aggregate the total timescreen for each participant per day
+################################################################################
+########################### Extract Final Features #############################
+################################################################################
+
+
+# Extract hour
+cleanLockStateiOS <- cleanLockStateiOS %>% 
+  mutate(hour = as.numeric(format(measuredat_local, "%H")))
+
+# Create three separate dataframes based on time of day
+daytime <-cleanLockStateiOS %>% filter(hour >= 7 & hour < 17)
+evening <- cleanLockStateiOS %>% filter(hour >= 17 & hour < 23)
+nighttime <- cleanLockStateiOS %>% filter(hour >= 23 | hour < 7)
+
+
+# aggregate the total, daytime, evening,and nighttime timescreen for each participant per day
 totalScreenTime <- aggregate(timescreen ~ DateNumber+participantid, cleanLockStateiOS, sum)
+daytimeScreenTime <- aggregate(timescreen ~ DateNumber+participantid, daytime, sum)
+eveningScreenTime <- aggregate(timescreen ~ DateNumber+participantid, evening, sum)
+nighttimeScreenTime <- aggregate(timescreen ~ DateNumber+participantid, nighttime, sum)
 
-# store date number, participant IDs and number of unlocks per day in a data frame called "UnlocksPerDay"
+# calculate the number of times screens were unlocked per day
 NumberOfEvents <- aggregate(timescreen ~ DateNumber+participantid, cleanLockStateiOS, length)
 NumberOfEvents <- NumberOfEvents %>% rename(numOfEvents = timescreen)
 
-# comine total screen time and number of unlocks/events in on dataframe 
-screenTimeFeaturesiOS <- cbind(totalScreenTime,NumberOfEvents$numOfEvents)
+NumberOfEvents_daytime <- aggregate(timescreen ~ DateNumber+participantid, daytime, length)
+NumberOfEvents_daytime <- NumberOfEvents_daytime %>% rename(numOfEvents_daytime = timescreen)
+
+NumberOfEvents_evening <- aggregate(timescreen ~ DateNumber+participantid, evening, length)
+NumberOfEvents_evening <- NumberOfEvents_evening %>% rename(numOfEvents_evening = timescreen)
+
+NumberOfEvents_nighttime <- aggregate(timescreen ~ DateNumber+participantid, nighttime, length)
+NumberOfEvents_nighttime <- NumberOfEvents_nighttime %>% rename(numOfEvents_nighttime = timescreen)
+
+
+
+# combine screen time and number of unlocks/events in on dataframe 
+totalFeaturesiOS <- cbind(totalScreenTime,NumberOfEvents$numOfEvents)
+daytimeFeaturesiOS <- cbind(daytimeScreenTime,NumberOfEvents_daytime$numOfEvents_daytime)
+eveningFeaturesiOS <- cbind(eveningScreenTime,NumberOfEvents_evening$numOfEvents_evening)
+nighttimeFeaturesiOS <- cbind(nighttimeScreenTime,NumberOfEvents_nighttime$numOfEvents_nighttime)
+
+
 
 #convert DateNumber back into Dates and remove DateNumber columns
-screenTimeFeaturesiOS$measuredat <- as.Date(screenTimeFeaturesiOS$DateNumber, origin = "1970-01-01")
-screenTimeFeaturesiOS <- select(screenTimeFeaturesiOS, -DateNumber)
+totalFeaturesiOS$measuredat <- as.Date(totalFeaturesiOS$DateNumber, origin = "1970-01-01")
+totalFeaturesiOS <- select(totalFeaturesiOS, -DateNumber)
+
+daytimeFeaturesiOS$measuredat <- as.Date(daytimeFeaturesiOS$DateNumber, origin = "1970-01-01")
+daytimeFeaturesiOS <- select(daytimeFeaturesiOS, -DateNumber)
+
+eveningFeaturesiOS$measuredat <- as.Date(eveningFeaturesiOS$DateNumber, origin = "1970-01-01")
+eveningFeaturesiOS <- select(eveningFeaturesiOS, -DateNumber)
+
+nighttimeFeaturesiOS$measuredat <- as.Date(nighttimeFeaturesiOS$DateNumber, origin = "1970-01-01")
+nighttimeFeaturesiOS <- select(nighttimeFeaturesiOS, -DateNumber)
+
+
 
 # rename columns for clarity
-screenTimeFeaturesiOS <- screenTimeFeaturesiOS %>%
-  rename(numOfEvents = `NumberOfEvents$numOfEvents`,  # Rename 'numOfEvents' to 'NumberOfEvents'
+totalFeaturesiOS <- totalFeaturesiOS %>%
+  rename(numOfEvents_total = `NumberOfEvents$numOfEvents`,  # Rename 'numOfEvents' to 'NumberOfEvents'
          totalScreenTime = timescreen)  # Rename 'totalScreenTime' to 'timescreen'
 
-head(screenTimeFeaturesiOS)
+head(totalFeaturesiOS)
+
+
+daytimeFeaturesiOS <- daytimeFeaturesiOS %>%
+  rename(numOfEvents_daytime = `NumberOfEvents_daytime$numOfEvents_daytime`,  
+         daytimeScreenTime = timescreen)  
+
+head(daytimeFeaturesiOS)
+
+
+eveningFeaturesiOS <- eveningFeaturesiOS %>%
+  rename(numOfEvents_evening = `NumberOfEvents_evening$numOfEvents_evening`,  
+         eveningScreenTime = timescreen)  
+
+head(eveningFeaturesiOS)
+
+
+nighttimeFeaturesiOS <- nighttimeFeaturesiOS %>%
+  rename(numOfEvents_nighttime = `NumberOfEvents_nighttime$numOfEvents_nighttime`,  
+         nighttimeScreenTime = timescreen)  
+
+head(nighttimeFeaturesiOS)
+
+
+################################################################################
+
+# Because we filtered rows based on hours when computing daytime, evening, and 
+# nighttime features, there are distinct number of rows corresponding to unique
+# 'participantid' - 'measured_date' combinations. In order to keep everything 
+# aligned (as we are working with identical PIDs and dates across different 
+# screentime features) we will match the number of rows for
+# each feature, with values = NA for newly added rows.
+
+################################################################################
+
+
+# Extract unique participantid-measured_date combinations
+total_combos <- totalFeaturesiOS %>% 
+  select(participantid, measuredat) %>% 
+  distinct()
+
+daytime_combos <- daytimeFeaturesiOS %>% 
+  select(participantid, measuredat) %>% 
+  distinct()
+
+evening_combos <- eveningFeaturesiOS %>% 
+  select(participantid, measuredat) %>% 
+  distinct()
+
+nighttime_combos <- nighttimeFeaturesiOS %>% 
+  select(participantid, measuredat) %>% 
+  distinct()
+
+# Convert to vectors
+total_vector <- paste(total_combos$participantid, total_combos$measuredat, sep = "_")
+daytime_vector <- paste(daytime_combos$participantid, daytime_combos$measuredat, sep = "_")
+evening_vector <- paste(evening_combos$participantid, evening_combos$measuredat, sep = "_")
+nighttime_vector <- paste(nighttime_combos$participantid, nighttime_combos$measuredat, sep = "_")
+
+# Find missing combinations
+missing_combos_daytime <- setdiff(total_vector, daytime_vector)
+missing_combos_evening <- setdiff(total_vector, evening_vector)
+missing_combos_nighttime <- setdiff(total_vector, nighttime_vector)
+
+# Convert missing combos back to a data frame
+missing_combos_df_daytime <- data.frame(
+  participantid = sub("_.*", "", missing_combos_daytime),
+  measuredat = as.Date(sub(".*_", "", missing_combos_daytime)),
+  daytimeScreenTime = NA,
+  numOfEvents_daytime = NA
+)
+
+missing_combos_df_evening <- data.frame(
+  participantid = sub("_.*", "", missing_combos_evening),
+  measuredat = as.Date(sub(".*_", "", missing_combos_evening)),
+  eveningScreenTime = NA,
+  numOfEvents_evening = NA
+)
+
+missing_combos_df_nighttime <- data.frame(
+  participantid = sub("_.*", "", missing_combos_nighttime),
+  measuredat = as.Date(sub(".*_", "", missing_combos_nighttime)),
+  nighttimeScreenTime = NA,
+  numOfEvents_nighttime = NA
+)
+
+
+
+# arrange the column order to match each other before rowbinding 
+daytimeFeaturesiOS <- daytimeFeaturesiOS %>%
+  select(participantid, measuredat, everything())
+
+eveningFeaturesiOS <- eveningFeaturesiOS %>%
+  select(participantid, measuredat, everything())
+
+nighttimeFeaturesiOS <- nighttimeFeaturesiOS %>%
+  select(participantid, measuredat, everything())
+
+totalFeaturesiOS <- totalFeaturesiOS %>%
+  select(participantid, measuredat, everything())
+
+
+# Append missing rows
+daytimeFeaturesiOS <- rbind(daytimeFeaturesiOS, missing_combos_df_daytime)
+eveningFeaturesiOS <- rbind(eveningFeaturesiOS, missing_combos_df_evening)
+nighttimeFeaturesiOS <- rbind(nighttimeFeaturesiOS, missing_combos_df_nighttime)
+
+
+# Order by PID and measured_date
+daytimeFeaturesiOS <- daytimeFeaturesiOS %>% arrange(participantid, measuredat)
+eveningFeaturesiOS <- eveningFeaturesiOS %>% arrange(participantid, measuredat)
+nighttimeFeaturesiOS <- nighttimeFeaturesiOS %>% arrange(participantid, measuredat)
+
+
+# Merge all features into a single dataframe
+finalScreenTimeFeaturesiOS <- reduce(list(totalFeaturesiOS, daytimeFeaturesiOS, eveningFeaturesiOS, nighttimeFeaturesiOS), 
+                        full_join, by = c("participantid", "measuredat"))
+
+
+
+##############################################################################
+######## save the screen time features in the PSQL database ##################
+##############################################################################
+
+# Rename columns in the dataframe to match SQL table column names
+colnames(finalScreenTimeFeaturesiOS) <- c(
+  "participantid", 
+  "measuredat", 
+  "total_screen_time", 
+  "num_of_events_total", 
+  "daytime_screen_time", 
+  "num_of_events_daytime", 
+  "evening_screen_time", 
+  "num_of_events_evening", 
+  "nighttime_screen_time", 
+  "num_of_events_nighttime"
+)
+
+# Check the structure to confirm changes
+str(finalScreenTimeFeaturesiOS)
+
+
+append_to_db(finalScreenTimeFeaturesiOS, "user1_workspace", "daily_screen_features_ios")
+
 
 
 
 
 
 ################################################################################
-################################## Android #####################################
+############################# Android Cleaning #################################
 ################################################################################
 
 # remove the duplicate values 
@@ -203,13 +434,281 @@ PowerStateAnd <- PowerStateAnd %>%
 
 PowerStateAnd <-filter(PowerStateAnd, timescreen  <= 36000 )
 
-
-
-
-
-
 # filter out the incorrect episodes (these are episodes that are 0 seconds long)
 LockStateAnd <- filter(PowerStateAnd, timescreen != 0)
+
+
+################################################################################
+############### Import Local Timzeones from Timezone_Lookup Table ##############
+################################################################################
+
+# Convert datetime columns to POSIXct for comparison
+LockStateAnd <- LockStateAnd %>%
+  mutate(measuredat_1 = as.POSIXct(measuredat_1, format = "%Y-%m-%d %H:%M:%S", tz = "UTC"))
+
+LookUpTimezone <- LookUpTimezone %>%
+  mutate(
+    start_time = as.POSIXct(start_time, format = "%Y-%m-%d %H:%M:%S", tz = "UTC"),
+    end_time = as.POSIXct(end_time, format = "%Y-%m-%d %H:%M:%S", tz = "UTC")
+  )
+
+# Apply function to LockStateAnd
+LockStateAnd <- LockStateAnd %>%
+  rowwise() %>%
+  mutate(timezone = assign_timezone(participantid, measuredat_1)) %>%
+  ungroup()
+
+
+# Compute timezone offset based on timezones
+# save under a new column "timezone_difference"
+LockStateAnd$timezone_difference <- sapply(1:nrow(LockStateAnd), function(i) {
+  tz <- LockStateAnd$timezone[i]
+  dt <- LockStateAnd$measuredat_1[i]
+  
+  if (is.na(tz)) {
+    return(NA_real_)  # NA timezones are automatically NA
+  }
+  
+  return(tz_offset(as.POSIXct(dt), tz = tz)$utc_offset_h)
+})
+
+
+# Calculate measuredat_local by adding computed offset to UTC
+LockStateAnd <- LockStateAnd %>%
+  mutate(measuredat_local = measuredat_1 + as.difftime(timezone_difference, units = "hours"))
+
+
+# keep only necessary rows
+cleanLockStateAnd <- LockStateAnd %>%
+  select(participantid, measuredat_1, DateNumber, measuredat_local, timescreen)
+
+################################################################################
+########################### Extract Final Features #############################
+################################################################################
+
+
+# Extract hour
+cleanLockStateAnd <- cleanLockStateAnd %>% 
+  mutate(hour = as.numeric(format(measuredat_local, "%H")))
+
+# Create three separate dataframes based on time of day
+daytime <-cleanLockStateAnd %>% filter(hour >= 7 & hour < 17)
+evening <- cleanLockStateAnd %>% filter(hour >= 17 & hour < 23)
+nighttime <- cleanLockStateAnd %>% filter(hour >= 23 | hour < 7)
+
+
+# aggregate the total, daytime, evening,and nighttime timescreen for each participant per day
+totalScreenTime <- aggregate(timescreen ~ DateNumber+participantid, cleanLockStateAnd, sum)
+daytimeScreenTime <- aggregate(timescreen ~ DateNumber+participantid, daytime, sum)
+eveningScreenTime <- aggregate(timescreen ~ DateNumber+participantid, evening, sum)
+nighttimeScreenTime <- aggregate(timescreen ~ DateNumber+participantid, nighttime, sum)
+
+# calculate the number of times screens were unlocked per day
+NumberOfEvents <- aggregate(timescreen ~ DateNumber+participantid, cleanLockStateAnd, length)
+NumberOfEvents <- NumberOfEvents %>% rename(numOfEvents = timescreen)
+
+NumberOfEvents_daytime <- aggregate(timescreen ~ DateNumber+participantid, daytime, length)
+NumberOfEvents_daytime <- NumberOfEvents_daytime %>% rename(numOfEvents_daytime = timescreen)
+
+NumberOfEvents_evening <- aggregate(timescreen ~ DateNumber+participantid, evening, length)
+NumberOfEvents_evening <- NumberOfEvents_evening %>% rename(numOfEvents_evening = timescreen)
+
+NumberOfEvents_nighttime <- aggregate(timescreen ~ DateNumber+participantid, nighttime, length)
+NumberOfEvents_nighttime <- NumberOfEvents_nighttime %>% rename(numOfEvents_nighttime = timescreen)
+
+
+
+# combine screen time and number of unlocks/events in on dataframe 
+totalFeaturesAnd <- cbind(totalScreenTime,NumberOfEvents$numOfEvents)
+daytimeFeaturesAnd <- cbind(daytimeScreenTime,NumberOfEvents_daytime$numOfEvents_daytime)
+eveningFeaturesAnd <- cbind(eveningScreenTime,NumberOfEvents_evening$numOfEvents_evening)
+nighttimeFeaturesAnd <- cbind(nighttimeScreenTime,NumberOfEvents_nighttime$numOfEvents_nighttime)
+
+
+
+#convert DateNumber back into Dates and remove DateNumber columns
+totalFeaturesAnd$measuredat <- as.Date(totalFeaturesAnd$DateNumber, origin = "1970-01-01")
+totalFeaturesAnd <- select(totalFeaturesAnd, -DateNumber)
+
+daytimeFeaturesAnd$measuredat <- as.Date(daytimeFeaturesAnd$DateNumber, origin = "1970-01-01")
+daytimeFeaturesAnd <- select(daytimeFeaturesAnd, -DateNumber)
+
+eveningFeaturesAnd$measuredat <- as.Date(eveningFeaturesAnd$DateNumber, origin = "1970-01-01")
+eveningFeaturesAnd <- select(eveningFeaturesAnd, -DateNumber)
+
+nighttimeFeaturesAnd$measuredat <- as.Date(nighttimeFeaturesAnd$DateNumber, origin = "1970-01-01")
+nighttimeFeaturesAnd <- select(nighttimeFeaturesAnd, -DateNumber)
+
+
+
+# rename columns for clarity
+totalFeaturesAnd <- totalFeaturesAnd %>%
+  rename(numOfEvents_total = `NumberOfEvents$numOfEvents`,  # Rename 'numOfEvents' to 'NumberOfEvents'
+         totalScreenTime = timescreen)  # Rename 'totalScreenTime' to 'timescreen'
+
+head(totalFeaturesAnd)
+
+
+daytimeFeaturesAnd <- daytimeFeaturesAnd %>%
+  rename(numOfEvents_daytime = `NumberOfEvents_daytime$numOfEvents_daytime`,  
+         daytimeScreenTime = timescreen)  
+
+head(daytimeFeaturesAnd)
+
+
+eveningFeaturesAnd <- eveningFeaturesAnd %>%
+  rename(numOfEvents_evening = `NumberOfEvents_evening$numOfEvents_evening`,  
+         eveningScreenTime = timescreen)  
+
+head(eveningFeaturesAnd)
+
+
+nighttimeFeaturesAnd <- nighttimeFeaturesAnd %>%
+  rename(numOfEvents_nighttime = `NumberOfEvents_nighttime$numOfEvents_nighttime`,  
+         nighttimeScreenTime = timescreen)  
+
+head(nighttimeFeaturesAnd)
+
+
+################################################################################
+
+# Because we filtered rows based on hours when computing daytime, evening, and 
+# nighttime features, there are distinct number of rows corresponding to unique
+# 'participantid' - 'measured_date' combinations. In order to keep everything 
+# aligned (as we are working with identical PIDs and dates across different 
+# screentime features) we will match the number of rows for
+# each feature, with values = NA for newly added rows.
+
+################################################################################
+
+
+# Extract unique participantid-measured_date combinations
+total_combos <- totalFeaturesAnd %>% 
+  select(participantid, measuredat) %>% 
+  distinct()
+
+daytime_combos <- daytimeFeaturesAnd %>% 
+  select(participantid, measuredat) %>% 
+  distinct()
+
+evening_combos <- eveningFeaturesAnd %>% 
+  select(participantid, measuredat) %>% 
+  distinct()
+
+nighttime_combos <- nighttimeFeaturesAnd %>% 
+  select(participantid, measuredat) %>% 
+  distinct()
+
+# Convert to vectors
+total_vector <- paste(total_combos$participantid, total_combos$measuredat, sep = "_")
+daytime_vector <- paste(daytime_combos$participantid, daytime_combos$measuredat, sep = "_")
+evening_vector <- paste(evening_combos$participantid, evening_combos$measuredat, sep = "_")
+nighttime_vector <- paste(nighttime_combos$participantid, nighttime_combos$measuredat, sep = "_")
+
+# Find missing combinations
+missing_combos_daytime <- setdiff(total_vector, daytime_vector)
+missing_combos_evening <- setdiff(total_vector, evening_vector)
+missing_combos_nighttime <- setdiff(total_vector, nighttime_vector)
+
+# Convert missing combos back to a data frame
+missing_combos_df_daytime <- data.frame(
+  participantid = sub("_.*", "", missing_combos_daytime),
+  measuredat = as.Date(sub(".*_", "", missing_combos_daytime)),
+  daytimeScreenTime = NA,
+  numOfEvents_daytime = NA
+)
+
+missing_combos_df_evening <- data.frame(
+  participantid = sub("_.*", "", missing_combos_evening),
+  measuredat = as.Date(sub(".*_", "", missing_combos_evening)),
+  eveningScreenTime = NA,
+  numOfEvents_evening = NA
+)
+
+missing_combos_df_nighttime <- data.frame(
+  participantid = sub("_.*", "", missing_combos_nighttime),
+  measuredat = as.Date(sub(".*_", "", missing_combos_nighttime)),
+  nighttimeScreenTime = NA,
+  numOfEvents_nighttime = NA
+)
+
+
+
+# arrange the column order to match each other before rowbinding 
+daytimeFeaturesAnd <- daytimeFeaturesAnd %>%
+  select(participantid, measuredat, everything())
+
+eveningFeaturesAnd <- eveningFeaturesAnd %>%
+  select(participantid, measuredat, everything())
+
+nighttimeFeaturesAnd <- nighttimeFeaturesAnd %>%
+  select(participantid, measuredat, everything())
+
+totalFeaturesAnd <- totalFeaturesAnd %>%
+  select(participantid, measuredat, everything())
+
+
+# Append missing rows
+daytimeFeaturesAnd <- rbind(daytimeFeaturesAnd, missing_combos_df_daytime)
+eveningFeaturesAnd <- rbind(eveningFeaturesAnd, missing_combos_df_evening)
+nighttimeFeaturesAnd <- rbind(nighttimeFeaturesAnd, missing_combos_df_nighttime)
+
+
+# Order by PID and measured_date
+daytimeFeaturesAnd <- daytimeFeaturesAnd %>% arrange(participantid, measuredat)
+eveningFeaturesAnd <- eveningFeaturesAnd %>% arrange(participantid, measuredat)
+nighttimeFeaturesAnd <- nighttimeFeaturesAnd %>% arrange(participantid, measuredat)
+
+
+# Merge all features into a single dataframe
+finalScreenTimeFeaturesAnd <- reduce(list(totalFeaturesAnd, daytimeFeaturesAnd, eveningFeaturesAnd, nighttimeFeaturesAnd), 
+                                     full_join, by = c("participantid", "measuredat"))
+
+##############################################################################
+######## save the screen time features in the PSQL database ##################
+##############################################################################
+
+# Rename columns in the dataframe to match SQL table column names
+colnames(finalScreenTimeFeaturesiOS) <- c(
+  "participantid", 
+  "measuredat", 
+  "total_screen_time", 
+  "num_of_events_total", 
+  "daytime_screen_time", 
+  "num_of_events_daytime", 
+  "evening_screen_time", 
+  "num_of_events_evening", 
+  "nighttime_screen_time", 
+  "num_of_events_nighttime"
+)
+
+# Check the structure to confirm changes
+str(finalScreenTimeFeaturesiOS)
+
+
+append_to_db(finalScreenTimeFeaturesiOS, "user1_workspace", "daily_screen_features_ios")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 # keep only necessary rows
 cleanLockStateAnd <- LockStateAnd %>%
