@@ -669,7 +669,7 @@ finalScreenTimeFeaturesAnd <- reduce(list(totalFeaturesAnd, daytimeFeaturesAnd, 
 ##############################################################################
 
 # Rename columns in the dataframe to match SQL table column names
-colnames(finalScreenTimeFeaturesiOS) <- c(
+colnames(finalScreenTimeFeaturesAnd) <- c(
   "participantid", 
   "measuredat", 
   "total_screen_time", 
@@ -683,79 +683,13 @@ colnames(finalScreenTimeFeaturesiOS) <- c(
 )
 
 # Check the structure to confirm changes
-str(finalScreenTimeFeaturesiOS)
+str(finalScreenTimeFeaturesAnd)
 
 
-append_to_db(finalScreenTimeFeaturesiOS, "user1_workspace", "daily_screen_features_ios")
-
-
-
+append_to_db(finalScreenTimeFeaturesAnd, "user1_workspace", "daily_screen_features_and")
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# keep only necessary rows
-cleanLockStateAnd <- LockStateAnd %>%
-  select(participantid, measuredat_1, DateNumber, timescreen)
-
-# aggregate the total timescreen for each participant per day
-totalScreenTime <- aggregate(timescreen ~ DateNumber+participantid, cleanLockStateAnd, sum)
-
-# store date number, participant IDs and number of unlocks per day in a data frame called "UnlocksPerDay"
-NumberOfEvents <- aggregate(timescreen ~ DateNumber+participantid, cleanLockStateAnd, length)
-NumberOfEvents <- NumberOfEvents %>% rename(numOfEvents = timescreen)
-
-# comine total screen time and number of unlocks/events in on dataframe 
-screenTimeFeaturesAnd <- cbind(totalScreenTime,NumberOfEvents$numOfEvents)
-
-#convert DateNumber back into Dates and remove DateNumber columns
-screenTimeFeaturesAnd$measuredat <- as.Date(screenTimeFeaturesAnd$DateNumber, origin = "1970-01-01")
-screenTimeFeaturesAnd <- select(screenTimeFeaturesAnd, -DateNumber)
-
-# rename columns for clarity
-screenTimeFeaturesAnd <- screenTimeFeaturesAnd %>%
-  rename(numofevents = `NumberOfEvents$numOfEvents`,  # Rename 'numOfEvents' to 'NumberOfEvents'
-         totalscreentime = timescreen)  # Rename 'totalScreenTime' to 'timescreen'
-
-head(screenTimeFeaturesAnd)
-
-#combine Android and iOS
-screenTimeFeatures <- rbind(screenTimeFeaturesAnd, screenTimeFeaturesiOS)
-
-head(screenTimeFeatures)
-
-
-
-##############################################################################
-######## Save the Screen Time Features data into PSQL database ###############  
-##############################################################################
-# Change the format so it's compatible with PSQL
-
-screenTimeFeatures <- screenTimeFeatures %>%
-  mutate(
-    measuredat = as.Date(measuredat, format = "%Y-%m-%d"),  # Ensure Date format
-    totalscreentime = as.numeric(totalscreentime),
-    numofevents = as.integer(numofevents)
-  )
-
-
-append_to_db(screenTimeFeatures, "user1_workspace", "daily_screen_features")
 
 
 
