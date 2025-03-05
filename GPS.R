@@ -151,6 +151,7 @@ detected_stay_points <- gpsa %>%
   }) %>%
   ungroup()
 
+table(detected_stay_points$stay_cluster)
 
 # Now compute daily number of stay points per person
 gps_stay_points_daily <- detected_stay_points %>%
@@ -174,6 +175,7 @@ gps_stay_points_daily <- detected_stay_points %>%
 # of each stay point, and use it to compute Shannon entropy for non-zero 
 # probabilities
 gps_loc_entropy_daily <- detected_stay_points %>%
+  filter(stay_cluster == TRUE) %>%
   group_by(participantid, measured_date) %>%
   summarise(
     total_time_at_clusters = sum(as.numeric(time_spent_there), na.rm = TRUE),  
@@ -185,7 +187,6 @@ gps_loc_entropy_daily <- detected_stay_points %>%
     ),
     .groups = "drop"
   )
-
 
 
 ################################################################################
@@ -317,6 +318,7 @@ gps_features_daily <- gps_features_daily %>%
   )
 
 append_to_db(gps_features_daily, "user1_workspace", "daily_gps_features")
+
 
 
 
