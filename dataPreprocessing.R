@@ -5,11 +5,6 @@ source(conn)
 close(conn)
 
 
-# features only: 
-# normalize ios vs android separately 
-# outlier detection - 38D
-
-
 connect_to_prosit_database()
 
 query <- "SELECT * FROM user1_workspace.daily_gps_features;"
@@ -174,131 +169,115 @@ nrow(activityand_count)
 nrow(activityios_count)
 
 
+
+
+
 ################################################################################
-####################### Normalization of Features ##############################
+################### Winsorize the Outliers then Normalize ######################
 ################################################################################
 
-# min-max normalization function
-#normalize_minmax <- function(x) {
-#  rng <- range(x, na.rm = TRUE)
-#  if (diff(rng) == 0) return(rep(0, length(x)))  # if division by zero, assign zero
-#  (x - rng[1]) / diff(rng)
-#}
-
-
-
-gps_and$total_haversine <- scale(gps_and$total_haversine)
-gps_and$number_of_stay_points <- scale(gps_and$number_of_stay_points)
-gps_and$total_time_at_clusters <- scale(gps_and$total_time_at_clusters)
-gps_and$location_entropy <- scale(gps_and$location_entropy)
-gps_and$location_variance[is.infinite(gps_and$location_variance)] <- NA
-gps_and$location_variance <- scale(gps_and$location_variance)
-
-summary(gps_and)
-
-
-gps_ios$total_haversine <- scale(gps_ios$total_haversine)
-gps_ios$number_of_stay_points <- scale(gps_ios$number_of_stay_points)
-gps_ios$total_time_at_clusters <- scale(gps_ios$total_time_at_clusters)
-gps_ios$location_entropy <- scale(gps_ios$location_entropy)
-gps_ios$location_variance[is.infinite(gps_ios$location_variance)] <- NA
-gps_ios$location_variance <- scale(gps_ios$location_variance)
-
-summary(gps_ios)
-
-
-screen_and$total_screen_time <- scale(screen_and$total_screen_time)
-screen_and$num_of_events_total <- scale(screen_and$num_of_events_total)
-screen_and$daytime_screen_time <- scale(screen_and$daytime_screen_time)
-screen_and$num_of_events_daytime <- scale(screen_and$num_of_events_daytime)
-screen_and$evening_screen_time <- scale(screen_and$evening_screen_time)
-screen_and$num_of_events_evening <- scale(screen_and$num_of_events_evening)
-screen_and$nighttime_screen_time <- scale(screen_and$nighttime_screen_time)
-screen_and$num_of_events_nighttime <- scale(screen_and$num_of_events_nighttime)
-
-summary(screen_and)
-
-
-screen_ios$total_screen_time <- scale(screen_ios$total_screen_time)
-screen_ios$num_of_events_total <- scale(screen_ios$num_of_events_total)
-screen_ios$daytime_screen_time <- scale(screen_ios$daytime_screen_time)
-screen_ios$num_of_events_daytime <- scale(screen_ios$num_of_events_daytime)
-screen_ios$evening_screen_time <- scale(screen_ios$evening_screen_time)
-screen_ios$num_of_events_evening <- scale(screen_ios$num_of_events_evening)
-screen_ios$nighttime_screen_time <- scale(screen_ios$nighttime_screen_time)
-screen_ios$num_of_events_nighttime <- scale(screen_ios$num_of_events_nighttime)
-
-summary(screen_and)
-
-
-activity_and$non_vigorous_pa_minutes <- scale(activity_and$non_vigorous_pa_minutes)
-activity_and$vigorous_pa_minutes <- scale(activity_and$vigorous_pa_minutes)
-activity_and$total_active_minutes <- scale(activity_and$total_active_minutes)
-activity_and$total_inactive_minutes <- scale(activity_and$total_inactive_minutes)
-activity_and$percent_sedentary <- scale(activity_and$percent_sedentary)
-activity_and$day_minutes <- scale(activity_and$day_minutes)  
-activity_and$evening_minutes <- scale(activity_and$evening_minutes)  
-activity_and$night_minutes <- scale(activity_and$night_minutes)
-activity_and$avg_euclidean_norm <- scale(activity_and$avg_euclidean_norm) 
-activity_and$max_euclidean_norm <- scale(activity_and$max_euclidean_norm)
-activity_and$activity_variability <- scale(activity_and$activity_variability) 
-
-summary(activity_and)
-
-
-activity_ios$non_vigorous_pa_minutes <- scale(activity_ios$non_vigorous_pa_minutes)
-activity_ios$vigorous_pa_minutes <- scale(activity_ios$vigorous_pa_minutes)
-activity_ios$total_active_minutes <- scale(activity_ios$total_active_minutes)
-activity_ios$total_inactive_minutes <- scale(activity_ios$total_inactive_minutes)
-activity_ios$percent_sedentary <- scale(activity_ios$percent_sedentary)
-activity_ios$day_minutes <- scale(activity_ios$day_minutes)  
-activity_ios$evening_minutes <- scale(activity_ios$evening_minutes)  
-activity_ios$night_minutes <- scale(activity_ios$night_minutes)
-activity_ios$avg_euclidean_norm <- scale(activity_ios$avg_euclidean_norm) 
-activity_ios$max_euclidean_norm <- scale(activity_ios$max_euclidean_norm)
-activity_ios$activity_variability <- scale(activity_ios$activity_variability) 
-
-summary(activity_ios)
-
-
-call_and$num_all_calls <- scale(call_and$num_all_calls)
-call_and$duration_all_calls <- scale(call_and$duration_all_calls)
-call_and$num_call_made <- scale(call_and$num_call_made)
-call_and$duration_calls_made <- scale(call_and$duration_calls_made)
-call_and$num_calls_received <- scale(call_and$num_calls_received)    
-call_and$duration_calls_received <- scale(call_and$duration_calls_received)
-call_and$num_missed_calls <- scale(call_and$num_missed_calls)
-call_and$num_rejected_calls <- scale(call_and$num_rejected_calls)   
-
-summary(call_and)
+winsorize_col_verbose <- function(x) {
+  Q1 <- quantile(x, 0.25, na.rm = TRUE)
+  Q3 <- quantile(x, 0.75, na.rm = TRUE)
+  IQR <- Q3 - Q1
+  lower <- Q1 - 1.5 * IQR
+  upper <- Q3 + 1.5 * IQR
   
- 
-call_ios$num_all_calls <- scale(call_ios$num_all_calls)
-call_ios$duration_all_calls <- scale(call_ios$duration_all_calls)
-call_ios$num_call_made <- scale(call_ios$num_call_made)
-call_ios$duration_calls_made <- scale(call_ios$duration_calls_made)
-call_ios$num_calls_received <- scale(call_ios$num_calls_received)    
-call_ios$duration_calls_received <- scale(call_ios$duration_calls_received)
-call_ios$num_missed_calls <- scale(call_ios$num_missed_calls)
-call_ios$num_rejected_calls <- scale(call_ios$num_rejected_calls) 
- 
-summary(call_ios)
-
-
-sleep_and$total_sleep_minutes <- scale(sleep_and$total_sleep_minutes)
-sleep_and$total_night_screen_minutes <- scale(sleep_and$total_night_screen_minutes)
-sleep_and$screen_interruptions <- scale(sleep_and$screen_interruptions)
-
-summary(sleep_and)  
+  # Copy original
+  x_orig <- x
   
+  # Winsorize
+  x[x < lower] <- lower
+  x[x > upper] <- upper
   
-sleep_ios$total_sleep_minutes <- scale(sleep_ios$total_sleep_minutes)
-sleep_ios$total_night_screen_minutes <- scale(sleep_ios$total_night_screen_minutes)
-sleep_ios$screen_interruptions <- scale(sleep_ios$screen_interruptions)
+  # Count clipped values
+  clipped <- sum(x != x_orig, na.rm = TRUE)
+  
+  return(list(values = x, clipped = clipped))
+}
 
-summary(sleep_ios) 
 
 
+winsorize_and_scale_df <- function(df, cols_to_process, df_name) {
+  for (col in cols_to_process) {
+    cat(sprintf("Processing %s$%s...\n", df_name, col))
+    x <- df[[col]]
+    
+    # Handle infinite values
+    x[is.infinite(x)] <- NA
+    
+    # Winsorize
+    result <- winsorize_col_verbose(x)
+    cat(sprintf("  Clipped %d values\n", result$clipped))
+    
+    # Scale
+    df[[col]] <- scale(result$values)
+  }
+  assign(df_name, df, envir = .GlobalEnv)
+  summary(df)
+}
+
+
+winsorize_and_scale_df(gps_and, c(
+  "total_haversine", "number_of_stay_points", "total_time_at_clusters",
+  "location_entropy", "location_variance"
+), "gps_and")
+
+
+winsorize_and_scale_df(gps_ios, c(
+  "total_haversine", "number_of_stay_points", "total_time_at_clusters",
+  "location_entropy", "location_variance"
+), "gps_ios")
+
+
+winsorize_and_scale_df(screen_and, c(
+  "total_screen_time", "num_of_events_total", "daytime_screen_time",
+  "num_of_events_daytime", "evening_screen_time", "num_of_events_evening",
+  "nighttime_screen_time", "num_of_events_nighttime"
+), "screen_and")
+
+
+winsorize_and_scale_df(screen_ios, c(
+  "total_screen_time", "num_of_events_total", "daytime_screen_time",
+  "num_of_events_daytime", "evening_screen_time", "num_of_events_evening",
+  "nighttime_screen_time", "num_of_events_nighttime"
+), "screen_ios")
+
+
+winsorize_and_scale_df(activity_and, c(
+  "non_vigorous_pa_minutes", "vigorous_pa_minutes", "total_active_minutes",
+  "total_inactive_minutes", "percent_sedentary", "day_minutes", "evening_minutes",
+  "night_minutes", "avg_euclidean_norm", "max_euclidean_norm", "activity_variability"
+), "activity_and")
+
+
+winsorize_and_scale_df(activity_ios, c(
+  "non_vigorous_pa_minutes", "vigorous_pa_minutes", "total_active_minutes",
+  "total_inactive_minutes", "percent_sedentary", "day_minutes", "evening_minutes",
+  "night_minutes", "avg_euclidean_norm", "max_euclidean_norm", "activity_variability"
+), "activity_ios")
+
+
+winsorize_and_scale_df(call_and, c(
+  "num_all_calls", "duration_all_calls", "num_call_made", "duration_calls_made",
+  "num_calls_received", "duration_calls_received", "num_missed_calls", "num_rejected_calls"
+), "call_and")
+
+
+winsorize_and_scale_df(call_ios, c(
+  "num_all_calls", "duration_all_calls", "num_call_made", "duration_calls_made",
+  "num_calls_received", "duration_calls_received", "num_missed_calls", "num_rejected_calls"
+), "call_ios")
+
+
+winsorize_and_scale_df(sleep_and, c(
+  "total_sleep_minutes", "total_night_screen_minutes", "screen_interruptions"
+), "sleep_and")
+
+
+winsorize_and_scale_df(sleep_ios, c(
+  "total_sleep_minutes", "total_night_screen_minutes", "screen_interruptions"
+), "sleep_ios")
 
 
 ################################################################################
@@ -412,76 +391,8 @@ sdq_clean <- SDQ %>%
 merged_data_final <- merged_data %>%
   left_join(sdq_clean, by = "participantid")
 
-merged_data_final <- select(merged_data_final, -redcap_survey_identifier)
 
-#View(merged_data_final)
-
-summary(merged_data_final)
-
-
-
-
-
-################################################################################
-############################# Winsorize the Outliers ###########################
-################################################################################
-
-winsorize_col_verbose <- function(x) {
-  Q1 <- quantile(x, 0.25, na.rm = TRUE)
-  Q3 <- quantile(x, 0.75, na.rm = TRUE)
-  IQR <- Q3 - Q1
-  lower <- Q1 - 1.5 * IQR
-  upper <- Q3 + 1.5 * IQR
-  
-  # Copy original
-  x_orig <- x
-  
-  # Winsorize
-  x[x < lower] <- lower
-  x[x > upper] <- upper
-  
-  # Count clipped values
-  clipped <- sum(x != x_orig, na.rm = TRUE)
-  
-  return(list(values = x, clipped = clipped))
-}
-
-
-features_to_winsorize <- c(
-  "gps_total_haversine", "gps_number_of_stay_points", "gps_total_time_at_clusters",
-  "gps_location_entropy", "gps_location_variance",
-  "screen_total_screen_time", "screen_num_of_events_total", "screen_daytime_screen_time",
-  "screen_num_of_events_daytime", "screen_evening_screen_time", "screen_num_of_events_evening",
-  "screen_nighttime_screen_time", "screen_num_of_events_nighttime",
-  "call_num_all_calls", "call_duration_all_calls", "call_num_call_made", "call_duration_calls_made",
-  "call_num_calls_received", "call_duration_calls_received", "call_num_missed_calls", "call_num_rejected_calls",
-  "sleep_total_sleep_minutes", "sleep_total_night_screen_minutes", "sleep_screen_interruptions",
-  "activity_non_vigorous_pa_minutes", "activity_vigorous_pa_minutes", "activity_total_active_minutes",
-  "activity_total_inactive_minutes", "activity_percent_sedentary", "activity_day_minutes",
-  "activity_evening_minutes", "activity_night_minutes", "activity_avg_euclidean_norm",
-  "activity_max_euclidean_norm", "activity_activity_variability"
-)
-
-
-# to store clipped counts
-clipped_counts <- list()
-
-# Apply the winsorization and extract both values and counts
-for (col in features_to_winsorize) {
-  result <- winsorize_col_verbose(merged_data_final[[col]])
-  merged_data_final[[col]] <- result$values
-  clipped_counts[[col]] <- result$clipped
-}
-
-# View how many values were clipped per column
-clipped_counts_df <- data.frame(
-  feature = names(clipped_counts),
-  n_clipped = unlist(clipped_counts)
-)
-
-print(clipped_counts_df)
-
-merged_final<- select(merged_data_final, -c(gps_device_type, sleep_device_type, activity_weekday_local))
+merged_final <- select(merged_data_final, -c(redcap_survey_identifier, gps_device_type, sleep_device_type, activity_weekday_local))
 names(merged_final)
 
 summary(merged_final)
