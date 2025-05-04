@@ -173,7 +173,7 @@ nrow(activityios_count)
 
 
 ################################################################################
-################### Winsorize the Outliers then Normalize ######################
+###################### Winsorize the Outliers + Normalize ######################
 ################################################################################
 
 winsorize_col_verbose <- function(x) {
@@ -211,7 +211,7 @@ winsorize_and_scale_df <- function(df, cols_to_process, df_name) {
     cat(sprintf("  Clipped %d values\n", result$clipped))
     
     # Scale
-    df[[col]] <- scale(result$values)
+    df[[col]] <- as.numeric(scale(result$values))
   }
   assign(df_name, df, envir = .GlobalEnv)
   summary(df)
@@ -281,7 +281,7 @@ winsorize_and_scale_df(sleep_ios, c(
 
 
 ################################################################################
-####################### Merging All Features into a Table ######################
+############### Merging Android and IOS + Prep for Grand Merge #################
 ################################################################################
 
 names(screen_and)
@@ -353,25 +353,235 @@ activity %>%
   filter(n > 1)
 
 
-# Step 3: Merge all dataframes using full_join recursively
-# To prevent column name collisions, add prefixes
+# Step 3: Prep for merge, to prevent column name collisions, add prefixes
 names(dfs) <- c("gps", "screen", "call", "sleep", "activity")
 
+
+################################################################################
+#################### Handling "Missing" versus "No" Events #####################
+################################################################################
+
+####################################
+####### PART 1: Pre-Merge ##########
+####################################
+
+
+# FOLLOWS SANDRA'S LOGIC EXCEL SHEET. SEE LOGIC.XLSX
+
+# Call columns to auto-set to 0
+cols_set_0 <- c(
+  "num_all_calls",
+  "duration_all_calls",
+  "num_call_made",
+  "duration_calls_made",
+  "num_calls_received",
+  "duration_calls_received",
+  "num_missed_calls",
+  "num_rejected_calls"
+)
+
+summary(call[cols_set_0])
+
+call[cols_set_0] <- lapply(call[cols_set_0], function(col) {
+  col[is.na(col)] <- 0
+  return(col)
+})
+
+summary(call[cols_set_0])
+
+
+
+# auto-set sleep_screen_interruptions to zero
+anyNA(sleep$screen_interruptions) # no NAs, we're good
+
+
+
+# Columns to set 0 if total_screen_time not missing
+cols_set_0_if_screentime <- c(
+  "daytime_screen_time",
+  "evening_screen_time",
+  "nighttime_screen_time"
+)
+
+summary(screen[cols_set_0_if_screentime])
+
+for (col in cols_set_0_if_screentime) {
+  idx <- is.na(screen[[col]]) & !is.na(screen$total_screen_time)
+  screen[[col]][idx] <- 0
+}
+
+summary(screen[cols_set_0_if_screentime])
+
+
+
+# Columns to set 0 if screen_num_of_events_total not missing
+cols_set_0_if_screennum <- c(
+  "num_of_events_daytime",
+  "num_of_events_evening",
+  "num_of_events_nighttime"
+)
+
+summary(screen[cols_set_0_if_screennum])
+
+for (col in cols_set_0_if_screennum) {
+  idx <- is.na(screen[[col]]) & !is.na(screen$num_of_events_total)
+  screen[[col]][idx] <- 0
+}
+
+summary(screen[cols_set_0_if_screennum])
+
+
+
+
+# Columns to set 0 if activity_total_inactive_minutes not missing
+cols_set_0_if_total_inactive <- c(
+  "non_vigorous_pa_minutes",
+  "vigorous_pa_minutes",
+  "total_active_minutes"
+)
+
+summary(activity[cols_set_0_if_total_inactive])
+anyNA(activity[cols_set_0_if_total_inactive]) # no NA's, we good
+
+
+
+
+# Columns to set 0 if activity_total_active_minutes not missing
+cols_set_0_if_total_active <- c(
+  "day_minutes",
+  "evening_minutes",
+  "night_minutes"
+)
+
+
+summary(activity[cols_set_0_if_total_active])
+anyNA(activity[cols_set_0_if_total_active]) # no NA's, we good
+
+
+####################################
+####### PART 2: Post-Merge #########
+####################################
+
+
+# create an NA map for each of the feature tables
+# this keeps record of missing events (NA cells) prior to merging
+# TRUE = NA before merging (corresponding to truly missing events)
+na_maps <- lapply(dfs, function(df) {
+  df_na <- df
+  cols_to_check <- setdiff(names(df), c("participantid", "date"))
+  df_na[cols_to_check] <- lapply(df_na[cols_to_check], is.na)
+  df_na
+})
+
+names(na_maps) <- names(dfs)
+
+# GRAND MERGE
 dfs <- imap(dfs, function(df, dfname) {
   df %>%
     rename_with(~ paste0(dfname, "_", .x), .cols = -c(participantid, date))
 })
 
-
-# Step 4: Reduce with full_join by participantid and date
+# Reduce with full_join by participantid and date
 merged_data <- reduce(dfs, full_join, by = c("participantid", "date"))
 
-#View(merged_data)
 
-names(merged_data)
-# View the result
-head(merged_data)
-summary(merged_data)
+# After the full join, some NAs we see are real missing values that were already
+# there in the original data. But some NAs we see are new NAs created because 
+# that participant simply had no entry in that table for that day. Below we 
+# differentiate between the real missing events versus the newly added NAs that 
+# were created during the full join. 
+
+# merge the NA maps the same way we merged the actal feature tables above
+na_maps_named <- imap(na_maps, function(map, name) {
+  map %>% rename_with(~ paste0(name, "_", .x), .cols = -c(participantid, date))
+})
+
+na_map_merged <- reduce(na_maps_named, full_join, by = c("participantid", "date"))
+
+
+# Only replace NAs in merged_data where na_map_combined is FALSE. Why? Because 
+# those NAs were newly introduced during the full join (because the participant/day 
+# did not exist in that table). Do this on a condition for each feature type.
+
+# Call features
+call_features <- grep("^call_", names(merged_data), value = TRUE)
+
+# Choose representative gps/activity columns that signal presence of data
+gps_check_col <- "gps_total_haversine"
+activity_check_col <- "activity_total_inactive_minutes"
+
+summary(merged_data[call_features])
+
+# Loop through call columns and conditionally replace NAs with 0
+for (col in call_features) {
+  idx_replace <- is.na(merged_data[[col]]) &      # NA in merged_data
+    !na_map_merged[[col]] &                       # NOT NA originally
+    !is.na(merged_data[[gps_check_col]]) &        # GPS data present
+    !is.na(merged_data[[activity_check_col]])     # Activity data present
+  
+  merged_data[[col]][idx_replace] <- 0
+}
+
+summary(merged_data[call_features]) # doesn't make a difference..
+
+# Screen features
+screen_features <- grep("^screen_", names(merged_data), value = TRUE)
+
+summary(merged_data[screen_features])
+
+for (col in screen_features) {
+  idx_replace <- is.na(merged_data[[col]]) &      # NA in merged_data
+    !na_map_merged[[col]] &                       # NOT NA originally
+    !is.na(merged_data[[gps_check_col]]) &        # GPS present
+    !is.na(merged_data[[activity_check_col]])     # Activity present
+  
+  merged_data[[col]][idx_replace] <- 0
+}
+
+summary(merged_data[screen_features]) # doesn't make a difference..
+
+
+################################################################################
+################### Excluding column(s) to handle NA's ###########################
+################################################################################
+
+# Strategy: Count NAs per column
+# Check how many rows become complete (no NA) when each column is removed
+# Sort columns by how much their exclusion helps recover rows
+
+
+# Step 1: Count how many NAs are in each column
+na_counts <- colSums(is.na(merged_data))
+
+# Step 2: For each column, compute how many rows would be complete if we removed just that column
+na_impact <- sapply(names(merged_data), function(col) {
+  temp <- merged_data[, setdiff(names(merged_data), col)]
+  sum(complete.cases(temp))
+})
+
+# Step 3: Compare with current number of complete rows
+n_complete_all <- sum(complete.cases(merged_data))
+
+# Step 4: Create a summary data frame
+na_summary <- data.frame(
+  column = names(na_impact),
+  na_count = na_counts[names(na_impact)],
+  complete_rows_if_removed = na_impact,
+  gain_vs_all_cols = na_impact - n_complete_all
+)
+
+# Step 5: Sort by most gain in complete rows
+na_summary_sorted <- na_summary[order(-na_summary$gain_vs_all_cols), ]
+
+# Keep only columns that are contributing to incompleteness
+na_summary_filtered <- na_summary_sorted[na_summary_sorted$na_count > 0 & na_summary_sorted$gain_vs_all_cols > 0, ]
+
+# View top contributors to NA-driven row exclusions
+head(na_summary_filtered, 10)
+
+# remove call_num_rejected_calls column
+
+merged_data <- select(merged_data, -call_num_rejected_calls)
 
 
 ################################################################################
@@ -397,40 +607,37 @@ names(merged_final)
 
 summary(merged_final)
 
-write.csv(merged_final, "SM_TabularData_Apr21.csv")
-
 data <- merged_final
 
 ################################################################################
-############################# Handling Missing Values ##########################
+############################# Complete Cases and Save  #########################
 ################################################################################
 
-na_summary <- sapply(data[c(features_to_winsorize, "emo_symptoms_baseline", "hyperactivity_baseline")], 
-                     function(col) sum(is.na(col)))
-na_summary
+length(unique(data$participantid))
 
 # remove all rows with NAs
-clean_data <- data %>%
-  filter(if_all(.cols = all_of(c(features_to_winsorize, "emo_symptoms_baseline", "hyperactivity_baseline")), ~ !is.na(.)))
+data <- data[complete.cases(data), ]
 
-length(unique(clean_data$participantid))
+# 259 participants with at least one dat of full data
+length(unique(data$participantid))
 
-clean_days_per_pid <- clean_data %>%
+clean_days_per_pid <- data %>%
   group_by(participantid) %>%
   summarize(days = n_distinct(date)) %>%
-  filter(days >= 5)
+  filter(days >= 3)
 
-clean_data <- clean_data %>%
+clean_data <- data %>%
   filter(participantid %in% clean_days_per_pid$participantid)
 
+# 144 participants with at least 3 days of full data
 length(unique(clean_data$participantid))
+
+# 107 participants with at least 5 days of full data
 
 summary(clean_data)
 
+write.csv(clean_data, "SM_Preprocessed_Cleaned_May4.csv")
 
-write.csv(clean_data, "SM_CleanTabularData_Apr21.csv")
-
-max(clean_days_per_pid$days)
 
 
 
