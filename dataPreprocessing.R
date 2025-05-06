@@ -80,6 +80,7 @@ ios_ids <- unique(c(
 ))
 
 
+# EXCLUDE PARTICIPANTS WHO SWITCH BETWEEN IOS AND ANDROID DEVICES
 # android vs. ios lookup dataframe
 android_df <- data.frame(participantid = android_ids, device_type = "android")
 ios_df <- data.frame(participantid = ios_ids, device_type = "ios")
@@ -139,36 +140,129 @@ gps_ios <- gps %>% filter(device_type == "ios")
 table(gps_and$device_type)
 table(gps_ios$device_type)
 
-length(is.na(gps_and$device_type))
-length(is.na(gps_ios$device_type))
-length(is.na(gps$device_type))
 
 
 
+################################################################################
+#################### Handling "Missing" versus "No" Events #####################
+################################################################################
 
-gpsand_count <- gps_and %>% count(participantid, measured_date)
-gpsios_count <- gps_ios %>% count(participantid, measured_date)
-screenand_count <- screen_and %>% count(participantid,measuredat)
-screenios_count <- screen_ios %>% count(participantid,measuredat)
-calland_count <- call_and %>% count(participantid, date_local)
-callios_count <- call_ios %>% count(participantid, date_local)
-sleepand_count <- sleep_and %>% count(participantid, sleep_date)
-sleepios_count <- sleep_ios %>% count(participantid, sleep_date)
-activityand_count <- activity_and %>% count(participantid, activity_date)
-activityios_count <- activity_ios %>% count(participantid, activity_date)
-
-nrow(gpsand_count)
-nrow(gpsios_count)
-nrow(screenand_count)
-nrow(screenios_count)
-nrow(calland_count)
-nrow(callios_count)
-nrow(sleepand_count)
-nrow(sleepios_count)
-nrow(activityand_count)
-nrow(activityios_count)
+####################################
+####### PART 1: Pre-Merge ##########
+####################################
 
 
+# FOLLOWS SANDRA'S LOGIC EXCEL SHEET. SEE LOGIC.XLSX
+
+# Call columns to auto-set to 0
+cols_set_0 <- c(
+  "num_all_calls",
+  "duration_all_calls",
+  "num_call_made",
+  "duration_calls_made",
+  "num_calls_received",
+  "duration_calls_received",
+  "num_missed_calls",
+  "num_rejected_calls"
+)
+
+summary(call_and[cols_set_0])
+summary(call_ios[cols_set_0])
+
+call_and[cols_set_0] <- lapply(call_and[cols_set_0], function(col) {
+  col[is.na(col)] <- 0
+  return(col)
+})
+
+call_ios[cols_set_0] <- lapply(call_ios[cols_set_0], function(col) {
+  col[is.na(col)] <- 0
+  return(col)
+})
+
+summary(call_and[cols_set_0])
+summary(call_ios[cols_set_0])
+
+
+# auto-set sleep_screen_interruptions to zero
+anyNA(sleep_and$screen_interruptions) # no NAs, we're good
+anyNA(sleep_ios$screen_interruptions) # no NAs, we're good
+
+
+# Columns to set 0 if total_screen_time not missing
+cols_set_0_if_screentime <- c(
+  "daytime_screen_time",
+  "evening_screen_time",
+  "nighttime_screen_time"
+)
+
+summary(screen_and[cols_set_0_if_screentime])
+summary(screen_ios[cols_set_0_if_screentime])
+
+for (col in cols_set_0_if_screentime) {
+  idx <- is.na(screen_and[[col]]) & !is.na(screen_and$total_screen_time)
+  screen_and[[col]][idx] <- 0
+}
+
+for (col in cols_set_0_if_screentime) {
+  idx <- is.na(screen_ios[[col]]) & !is.na(screen_ios$total_screen_time)
+  screen_ios[[col]][idx] <- 0
+}
+
+summary(screen_and[cols_set_0_if_screentime])
+summary(screen_ios[cols_set_0_if_screentime])
+
+
+# Columns to set 0 if screen_num_of_events_total not missing
+cols_set_0_if_screennum <- c(
+  "num_of_events_daytime",
+  "num_of_events_evening",
+  "num_of_events_nighttime"
+)
+
+summary(screen_and[cols_set_0_if_screennum])
+summary(screen_ios[cols_set_0_if_screennum])
+
+for (col in cols_set_0_if_screennum) {
+  idx <- is.na(screen_and[[col]]) & !is.na(screen_and$num_of_events_total)
+  screen_and[[col]][idx] <- 0
+}
+
+for (col in cols_set_0_if_screennum) {
+  idx <- is.na(screen_ios[[col]]) & !is.na(screen_ios$num_of_events_total)
+  screen_ios[[col]][idx] <- 0
+}
+
+summary(screen_and[cols_set_0_if_screennum])
+summary(screen_ios[cols_set_0_if_screennum])
+
+
+
+# Columns to set 0 if activity_total_inactive_minutes not missing
+cols_set_0_if_total_inactive <- c(
+  "non_vigorous_pa_minutes",
+  "vigorous_pa_minutes",
+  "total_active_minutes"
+)
+
+summary(activity_and[cols_set_0_if_total_inactive])
+summary(activity_ios[cols_set_0_if_total_inactive])
+anyNA(activity_and[cols_set_0_if_total_inactive]) # no NA's, we good
+anyNA(activity_ios[cols_set_0_if_total_inactive]) # no NA's, we good
+
+
+
+# Columns to set 0 if activity_total_active_minutes not missing
+cols_set_0_if_total_active <- c(
+  "day_minutes",
+  "evening_minutes",
+  "night_minutes"
+)
+
+
+summary(activity_and[cols_set_0_if_total_active])
+summary(activity_ios[cols_set_0_if_total_active])
+anyNA(activity_and[cols_set_0_if_total_active]) # no NA's, we good
+anyNA(activity_ios[cols_set_0_if_total_active]) # no NA's, we good
 
 
 
@@ -281,7 +375,7 @@ winsorize_and_scale_df(sleep_ios, c(
 
 
 ################################################################################
-############### Merging Android and IOS + Prep for Grand Merge #################
+############### Merging Android and IOS + Grand Merge ##########################
 ################################################################################
 
 names(screen_and)
@@ -357,124 +451,6 @@ activity %>%
 names(dfs) <- c("gps", "screen", "call", "sleep", "activity")
 
 
-################################################################################
-#################### Handling "Missing" versus "No" Events #####################
-################################################################################
-
-####################################
-####### PART 1: Pre-Merge ##########
-####################################
-
-
-# FOLLOWS SANDRA'S LOGIC EXCEL SHEET. SEE LOGIC.XLSX
-
-# Call columns to auto-set to 0
-cols_set_0 <- c(
-  "num_all_calls",
-  "duration_all_calls",
-  "num_call_made",
-  "duration_calls_made",
-  "num_calls_received",
-  "duration_calls_received",
-  "num_missed_calls",
-  "num_rejected_calls"
-)
-
-summary(call[cols_set_0])
-
-call[cols_set_0] <- lapply(call[cols_set_0], function(col) {
-  col[is.na(col)] <- 0
-  return(col)
-})
-
-summary(call[cols_set_0])
-
-
-
-# auto-set sleep_screen_interruptions to zero
-anyNA(sleep$screen_interruptions) # no NAs, we're good
-
-
-
-# Columns to set 0 if total_screen_time not missing
-cols_set_0_if_screentime <- c(
-  "daytime_screen_time",
-  "evening_screen_time",
-  "nighttime_screen_time"
-)
-
-summary(screen[cols_set_0_if_screentime])
-
-for (col in cols_set_0_if_screentime) {
-  idx <- is.na(screen[[col]]) & !is.na(screen$total_screen_time)
-  screen[[col]][idx] <- 0
-}
-
-summary(screen[cols_set_0_if_screentime])
-
-
-
-# Columns to set 0 if screen_num_of_events_total not missing
-cols_set_0_if_screennum <- c(
-  "num_of_events_daytime",
-  "num_of_events_evening",
-  "num_of_events_nighttime"
-)
-
-summary(screen[cols_set_0_if_screennum])
-
-for (col in cols_set_0_if_screennum) {
-  idx <- is.na(screen[[col]]) & !is.na(screen$num_of_events_total)
-  screen[[col]][idx] <- 0
-}
-
-summary(screen[cols_set_0_if_screennum])
-
-
-
-
-# Columns to set 0 if activity_total_inactive_minutes not missing
-cols_set_0_if_total_inactive <- c(
-  "non_vigorous_pa_minutes",
-  "vigorous_pa_minutes",
-  "total_active_minutes"
-)
-
-summary(activity[cols_set_0_if_total_inactive])
-anyNA(activity[cols_set_0_if_total_inactive]) # no NA's, we good
-
-
-
-
-# Columns to set 0 if activity_total_active_minutes not missing
-cols_set_0_if_total_active <- c(
-  "day_minutes",
-  "evening_minutes",
-  "night_minutes"
-)
-
-
-summary(activity[cols_set_0_if_total_active])
-anyNA(activity[cols_set_0_if_total_active]) # no NA's, we good
-
-
-####################################
-####### PART 2: Post-Merge #########
-####################################
-
-
-# create an NA map for each of the feature tables
-# this keeps record of missing events (NA cells) prior to merging
-# TRUE = NA before merging (corresponding to truly missing events)
-na_maps <- lapply(dfs, function(df) {
-  df_na <- df
-  cols_to_check <- setdiff(names(df), c("participantid", "date"))
-  df_na[cols_to_check] <- lapply(df_na[cols_to_check], is.na)
-  df_na
-})
-
-names(na_maps) <- names(dfs)
-
 # GRAND MERGE
 dfs <- imap(dfs, function(df, dfname) {
   df %>%
@@ -484,61 +460,8 @@ dfs <- imap(dfs, function(df, dfname) {
 # Reduce with full_join by participantid and date
 merged_data <- reduce(dfs, full_join, by = c("participantid", "date"))
 
-
-# After the full join, some NAs we see are real missing values that were already
-# there in the original data. But some NAs we see are new NAs created because 
-# that participant simply had no entry in that table for that day. Below we 
-# differentiate between the real missing events versus the newly added NAs that 
-# were created during the full join. 
-
-# merge the NA maps the same way we merged the actal feature tables above
-na_maps_named <- imap(na_maps, function(map, name) {
-  map %>% rename_with(~ paste0(name, "_", .x), .cols = -c(participantid, date))
-})
-
-na_map_merged <- reduce(na_maps_named, full_join, by = c("participantid", "date"))
-
-
-# Only replace NAs in merged_data where na_map_combined is FALSE. Why? Because 
-# those NAs were newly introduced during the full join (because the participant/day 
-# did not exist in that table). Do this on a condition for each feature type.
-
-# Call features
-call_features <- grep("^call_", names(merged_data), value = TRUE)
-
-# Choose representative gps/activity columns that signal presence of data
-gps_check_col <- "gps_total_haversine"
-activity_check_col <- "activity_total_inactive_minutes"
-
-summary(merged_data[call_features])
-
-# Loop through call columns and conditionally replace NAs with 0
-for (col in call_features) {
-  idx_replace <- is.na(merged_data[[col]]) &      # NA in merged_data
-    !na_map_merged[[col]] &                       # NOT NA originally
-    !is.na(merged_data[[gps_check_col]]) &        # GPS data present
-    !is.na(merged_data[[activity_check_col]])     # Activity data present
-  
-  merged_data[[col]][idx_replace] <- 0
-}
-
-summary(merged_data[call_features]) # doesn't make a difference..
-
-# Screen features
-screen_features <- grep("^screen_", names(merged_data), value = TRUE)
-
-summary(merged_data[screen_features])
-
-for (col in screen_features) {
-  idx_replace <- is.na(merged_data[[col]]) &      # NA in merged_data
-    !na_map_merged[[col]] &                       # NOT NA originally
-    !is.na(merged_data[[gps_check_col]]) &        # GPS present
-    !is.na(merged_data[[activity_check_col]])     # Activity present
-  
-  merged_data[[col]][idx_replace] <- 0
-}
-
-summary(merged_data[screen_features]) # doesn't make a difference..
+names(merged_data)
+summary(merged_data)
 
 
 ################################################################################
@@ -629,14 +552,12 @@ clean_days_per_pid <- data %>%
 clean_data <- data %>%
   filter(participantid %in% clean_days_per_pid$participantid)
 
-# 144 participants with at least 3 days of full data
+# 165 participants with at least 3 days of full data
 length(unique(clean_data$participantid))
-
-# 107 participants with at least 5 days of full data
 
 summary(clean_data)
 
-write.csv(clean_data, "SM_Preprocessed_Cleaned_May4.csv")
+write.csv(clean_data, "SM_Preprocessed_Cleaned_May6.csv")
 
 
 
