@@ -513,7 +513,11 @@ merged_data <- select(merged_data, -call_num_rejected_calls)
 
 SDQ <- read.csv("SDQ_SubscaleScores.csv")
 
-SDQ <- select(SDQ, redcap_survey_identifier, emo_symptoms_baseline, hyperactivity_baseline)
+SDQ <- select(SDQ, redcap_survey_identifier, emo_symptoms_baseline, 
+              hyperactivity_baseline,conduct_probs_baseline, peer_probs_baseline,
+              prosocial_baseline, emo_symptoms_followup, hyperactivity_followup, conduct_probs_followup,
+              peer_probs_followup, prosocial_followup
+              )
 head(SDQ)
 summary(SDQ)
 
@@ -539,9 +543,15 @@ data <- merged_final
 length(unique(data$participantid))
 
 # remove all rows with NAs
-data <- data[complete.cases(data), ]
+#data <- data[complete.cases(data), ]
+data <- data[complete.cases(data[ , !(names(data) %in% 
+                                        c("emo_symptoms_baseline", 
+                                          "hyperactivity_baseline","conduct_probs_baseline", "peer_probs_baseline",
+                                          "prosocial_baseline", "emo_symptoms_followup", "hyperactivity_followup", "conduct_probs_followup",
+                                          "peer_probs_followup", "prosocial_followup"))]), ]
 
-# 259 participants with at least one dat of full data
+
+# participants with at least one day of full data
 length(unique(data$participantid))
 
 clean_days_per_pid <- data %>%
@@ -557,7 +567,7 @@ length(unique(clean_data$participantid))
 
 summary(clean_data)
 
-write.csv(clean_data, "SM_Preprocessed_Cleaned_May6.csv")
+write.csv(clean_data, "SM_Complete_SDQ_Baseline+Followup_Jul16.csv")
 
 
 
