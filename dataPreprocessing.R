@@ -923,12 +923,12 @@ plot_raw_vs_log(activity_ios$max_euclidean_norm)
 plot_raw_vs_log(activity_ios$activity_variability)
 
 
-######################################################################################
-############### Log + Huber M Estimators Normalization - Global ######################
-######################################################################################
+###########################################################
+############### Log Transformations  ######################
+###########################################################
 
 # Will take the log of strictly positive and highly right skewed (mostly zeros) features first
-# after systematically exam,ning them, then do huber m estimators normalization 
+# after systematically examining them
 
 # --- Transform function as defined by the previıus section ---
 transform_gps <- function(df) {
@@ -938,16 +938,11 @@ transform_gps <- function(df) {
   for (col in names(df)) {
     if (col %in% c("participantid", "date_utc", "date_local", "device_type")) {
       next  # skip identifiers and metadata
-    }
-    
-    if (col %in% c("total_time_at_clusters_seconds", "location_entropy")) {
-      # only huber normalize
-      new_col <- paste0(col, "_n")
-      df[[new_col]] <- huber_normalize(df[[col]])
+  
     } else {
-      # log + huber normalize
-      new_col <- paste0(col, "_logn")
-      df[[new_col]] <- huber_normalize(log1p(df[[col]]))
+      # log 
+      new_col <- paste0(col, "_log")
+      df[[new_col]] <- (log1p(df[[col]]))
     }
   }
   
@@ -966,14 +961,10 @@ transform_screen <- function(df) {
       next  # skip identifiers and metadata
     }
     
-    if (col %in% c("total_screen_time_in_seconds")) {
-      # only huber normalize
-      new_col <- paste0(col, "_n")
-      df[[new_col]] <- huber_normalize(df[[col]])
-    } else {
-      # log + huber normalize
-      new_col <- paste0(col, "_logn")
-      df[[new_col]] <- huber_normalize(log1p(df[[col]]))
+     else {
+      # log 
+      new_col <- paste0(col, "_log")
+      df[[new_col]] <- (log1p(df[[col]]))
     }
   }
   
@@ -995,9 +986,9 @@ transform_call <- function(df) {
     }
     
     else {
-      # log + huber normalize
-      new_col <- paste0(col, "_logn")
-      df[[new_col]] <- huber_normalize(log1p(df[[col]]))
+      # log
+      new_col <- paste0(col, "_log")
+      df[[new_col]] <- (log1p(df[[col]]))
     }
   }
   
@@ -1014,15 +1005,10 @@ transform_sleep <- function(df) {
     if (col %in% c("participantid", "date_local", "device_type")) {
       next  # skip identifiers and metadata
     }
-    
-    if (col %in% c("total_inactive_seconds")) {
-      # only huber normalize
-      new_col <- paste0(col, "_n")
-      df[[new_col]] <- huber_normalize(df[[col]])
-    } else {
-      # log + huber normalize
-      new_col <- paste0(col, "_logn")
-      df[[new_col]] <- huber_normalize(log1p(df[[col]]))
+    else {
+      # log 
+      new_col <- paste0(col, "_log")
+      df[[new_col]] <- (log1p(df[[col]]))
     }
   }
   
@@ -1044,9 +1030,9 @@ transform_activity <- function(df) {
     }
   
     else {
-      # log + huber normalize
-      new_col <- paste0(col, "_logn")
-      df[[new_col]] <- huber_normalize(log1p(df[[col]]))
+      # log 
+      new_col <- paste0(col, "_log")
+      df[[new_col]] <- (log1p(df[[col]]))
     }
   }
   
@@ -1140,47 +1126,6 @@ names(merged_data)
 summary(merged_data)
 
 
-################################################################################
-################### Excluding column(s) to handle NA's ###########################
-################################################################################
-
-# Strategy: Remove any cols that are missing 50% or more
-
-na_summary_by_participant <- function(df, id_col = "participantid") {
-  # Ensure participantid is factor/character
-  ids <- unique(df[[id_col]])
-  
-  # Initialize results
-  results <- matrix(NA, nrow = length(ids), ncol = ncol(df))
-  colnames(results) <- names(df)
-  rownames(results) <- ids
-  
-  # Loop: proportion of NA per column within each participant
-  for (id in ids) {
-    subset_df <- df[df[[id_col]] == id, , drop = FALSE]
-    results[id, ] <- sapply(subset_df, function(col) mean(is.na(col)))
-  }
-  
-  # Remove id/date cols from summary (keep only features)
-  feature_cols <- setdiff(names(df), c(id_col, "date_local", "date_utc", "weekday_local", "device_type"))
-  results <- results[, feature_cols, drop = FALSE]
-  
-  # Average across participants
-  avg_missing <- colMeans(results, na.rm = TRUE)
-  
-  summary_df <- data.frame(
-    feature = names(avg_missing),
-    avg_missing_proportion = round(avg_missing, 4)
-  )
-  
-  print(summary_df)
-  invisible(summary_df)
-}
-
-summary(merged_data)
-
-
-
 
 
 ################################################################################
@@ -1189,7 +1134,7 @@ summary(merged_data)
 
 SDQ <- read.csv("SDQ_SubscaleScores.csv")
 
-SDQ <- select(SDQ, redcap_survey_identifier, emo_symptoms_baseline, 
+SDQ <- dplyr::select(SDQ, redcap_survey_identifier, emo_symptoms_baseline, 
               hyperactivity_baseline,conduct_probs_baseline, peer_probs_baseline,
               prosocial_baseline, emo_symptoms_followup, hyperactivity_followup, conduct_probs_followup,
               peer_probs_followup, prosocial_followup
@@ -1238,24 +1183,12 @@ clean_days_per_pid <- data %>%
 clean_data <- data %>%
   filter(participantid %in% clean_days_per_pid$participantid)
 
-# 367 participants with at least 5 days of full data
+# 448 participants with at least 5 days of full data
 length(unique(clean_data$participantid))
 
 summary(clean_data)
 
 write.csv(clean_data, "SMMS_5days_SD_Aug20.csv")
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
