@@ -109,7 +109,6 @@ huber_normalize_simple <- function(x) {
 # - Skips columns that error; prints their names
 # - Returns list with updated df + vector of skipped columns
 
-# assumes huber_normalize_simple(x) is already defined as in your code
 
 huber_normalize_df <- function(df, exclude = c(
   "emo_symptoms_baseline","hyperactivity_baseline","conduct_probs_baseline",
@@ -117,7 +116,7 @@ huber_normalize_df <- function(df, exclude = c(
   "emo_symptoms_followup","hyperactivity_followup","conduct_probs_followup",
   "peer_probs_followup","prosocial_followup"
 )) {
-  # numeric columns minus excluded ones (if some names don't exist, setdiff handles it)
+  # numeric columns minus excluded ones
   numeric_cols <- setdiff(names(df)[sapply(df, is.numeric)], exclude)
   
   skipped <- character(0)
@@ -220,7 +219,4 @@ data_norm <- data_norm %>%
 View(data_norm)
 
 write.csv(data_norm, "SMMS_aggregated_full_features_SD_Aug20.csv")
-
-
-
 
