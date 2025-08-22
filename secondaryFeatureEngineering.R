@@ -7,8 +7,7 @@ conn <- url("https://raw.githubusercontent.com/simaldolek/PROSIT-Mobile-Sensing/
 source(conn)
 close(conn)
 
-data <- read.csv("SMMS_5days_SD_Aug20.csv")
-View(data)
+data <- read.csv("SMMS_5days_SD_Aug22.csv")
 
 str(data)
 summary(data)
@@ -36,22 +35,18 @@ shannon_entropy <- function(x, bins = 10) {
 
 extract_features <- function(df, id_col = "participantid") {
   # Columns where we just want the first available value per participant
-  take_first_cols <- c(
+  take_first_cols <- c("device_type",
     "emo_symptoms_baseline", "hyperactivity_baseline", "conduct_probs_baseline",
     "peer_probs_baseline", "prosocial_baseline",
     "emo_symptoms_followup", "hyperactivity_followup", "conduct_probs_followup",
     "peer_probs_followup", "prosocial_followup"
   )
   
-  # Columns to drop completely
-  drop_cols <- c("gps_date_utc", "call_weekday_local", "screen_weekday_local")
-  
   # Numeric columns (excluding ID, dropped, and take_first ones)
   numeric_cols <- names(df)[sapply(df, is.numeric)]
-  numeric_cols <- setdiff(numeric_cols, c(id_col, "X", take_first_cols, drop_cols))
+  numeric_cols <- setdiff(numeric_cols, c(id_col, "X", take_first_cols))
   
   df %>%
-    dplyr::select(-all_of(drop_cols)) %>%
     group_by(.data[[id_col]]) %>%
     summarise(
       available_days = n(),
@@ -85,7 +80,6 @@ extract_features <- function(df, id_col = "participantid") {
 aggregated_data <- extract_features(data, id_col = "participantid")
 
 names(aggregated_data)
-View(aggregated_data)
 summary(aggregated_data)
 
 
@@ -111,44 +105,77 @@ huber_normalize_simple <- function(x) {
 
 
 huber_normalize_df <- function(df, exclude = c(
-  "emo_symptoms_baseline","hyperactivity_baseline","conduct_probs_baseline",
+  "available_days", "emo_symptoms_baseline","hyperactivity_baseline","conduct_probs_baseline",
   "peer_probs_baseline","prosocial_baseline",
   "emo_symptoms_followup","hyperactivity_followup","conduct_probs_followup",
   "peer_probs_followup","prosocial_followup"
 )) {
-  # numeric columns minus excluded ones
   numeric_cols <- setdiff(names(df)[sapply(df, is.numeric)], exclude)
   
   skipped <- character(0)
   normalized <- character(0)
   
   for (col in numeric_cols) {
+    vals <- df[[col]]
+    
+    # Explicit check for constant or all-NA columns
+    if (all(is.na(vals)) || mad(vals, na.rm = TRUE) == 0) {
+      message(sprintf("Skipping column '%s': all NA or MAD = 0", col))
+      skipped <- c(skipped, col)
+      next
+    }
+    
+    # Try normalization, catch real errors
     tryCatch({
-      df[[col]] <- huber_normalize_simple(df[[col]])
+      df[[col]] <- huber_normalize_simple(vals)
       normalized <- c(normalized, col)
     }, error = function(e) {
       message(sprintf("Skipping column '%s': %s", col, conditionMessage(e)))
-      skipped <<- c(skipped, col)
+      skipped <- c(skipped, col)
     })
   }
   
   message(sprintf("Huber-normalized %d numeric columns. Skipped %d.",
-                  length(normalized), length(skipped)))
-  list(data = df, skipped = skipped, normalized = normalized, excluded = intersect(exclude, names(df)))
+                  length(unique(normalized)), length(unique(skipped))))
+  
+  list(
+    data = df,
+    skipped = unique(skipped),
+    normalized = unique(normalized),
+    excluded = intersect(exclude, names(df))
+  )
 }
 
 
-res <- huber_normalize_df(aggregated_data)
-data_norm <- res$data
-res$skipped       # columns where huber() failed (e.g., MAD==0)
-res$normalized    # columns successfully normalized
 
+aggregated_data_and <- dplyr::filter(aggregated_data, device_type == "android")
+aggregated_data_ios <- dplyr::filter(aggregated_data, device_type == "ios")
+
+res_and <-huber_normalize_df(aggregated_data_and)
+res_ios <-huber_normalize_df(aggregated_data_ios)
+
+data_norm_and <- res_and$data
+data_norm_ios <- res_ios$data
+
+res_and$skipped
+res_ios$skipped # columns where huber() failed (e.g., MAD==0)
+cols_to_remove <- union(res_and$skipped, res_ios$skipped)
+cols_to_remove
 
 # remove all skipped features since MAD = 0 (not valuable for classification)
-data_norm <- data_norm %>%
-  dplyr::select(-all_of(res$skipped))
+data_norm_and_clean <- data_norm_and[ , !(names(data_norm_and) %in% cols_to_remove)]
+data_norm_ios_clean <- data_norm_ios[ , !(names(data_norm_ios) %in% cols_to_remove)]
 
-names(data_norm)
+data_norm <- bind_rows(
+  data_norm_and_clean,
+  data_norm_ios_clean
+)
+
+# Sort by participantid 
+data_norm <- data_norm %>%
+  arrange(participantid)
+
+View(data_norm)
 
 ################################################################################
 ########### SDQ Clinical Cutoffs to Categorize PIDs into Groups  ###############
@@ -218,5 +245,5 @@ data_norm <- data_norm %>%
 
 View(data_norm)
 
-write.csv(data_norm, "SMMS_aggregated_full_features_SD_Aug20.csv")
+write.csv(data_norm, "SMMS_aggregated_full_features_SD_Aug22.csv")
 

@@ -1,6 +1,3 @@
-
-
-
 # source functions.R script.
 conn <- url("https://raw.githubusercontent.com/simaldolek/PROSIT-Mobile-Sensing/refs/heads/main/functions.R")
 source(conn)
@@ -177,12 +174,8 @@ str(activity_ios)
 #################### Handling "Missing" versus "No" Events #####################
 ################################################################################
 
-####################################
-####### PART 1: Pre-Merge ##########
-####################################
 
-
-# FOLLOWS SANDRA'S LOGIC EXCEL SHEET. SEE LOGIC.XLSX
+# FOLLOWS SANDRA'S LOGIC EXCEL SHEET. SEE LOGIC for 0s.XLSX
 
 # Call columns to auto-set to 0
 cols_set_0 <- c(
@@ -723,14 +716,20 @@ range(sleep_ios$total_night_screen_seconds)
 
 names(screen_and)
 names(screen_ios)
+screen_and$device_type <- "android"
+screen_ios$device_type <- "ios"
 screen <- rbind(screen_and, screen_ios)
 
 names(call_and)
 names(call_ios)
+call_and$device_type <- "android"
+call_ios$device_type <- "ios"
 call <- rbind(call_and, call_ios)
 
 names(activity_and)
 names(activity_ios)
+activity_and$device_type <- "android"
+activity_ios$device_type <- "ios"
 activity <- rbind(activity_and, activity_ios)
 
 names(gps_and)
@@ -776,11 +775,11 @@ call %>%
 
 sleep %>%
   count(participantid, date_local) %>%
-  filter(n > 2)
+  filter(n > 1)
 
 activity %>%
   count(participantid, date_local) %>%
-  filter(n > 2)
+  filter(n > 1)
 
 
 # Step 3: Prep for merge, to prevent column name collisions, add prefixes
@@ -800,7 +799,11 @@ names(merged_data)
 summary(merged_data)
 
 
+for (i in seq_along(merged_data)) {
+  cat(names(merged_data)[i], ":", sum(is.na(merged_data[[i]])), "\n")
+}
 
+merged_data <- dplyr::select(merged_data, -c(sleep_device_type, call_device_type, screen_device_type,gps_device_type))
 
 ################################################################################
 ####################### Add the SDQ Subscale Scores to the Table ###############
@@ -824,10 +827,16 @@ merged_data_final <- merged_data %>%
   left_join(sdq_clean, by = "participantid")
 
 
-merged_final <- dplyr::select(merged_data_final, -c(redcap_survey_identifier, gps_device_type, sleep_device_type, activity_weekday_local))
+merged_final <- dplyr::select(merged_data_final, -c(redcap_survey_identifier, gps_date_utc,screen_weekday_local,
+                                                    call_weekday_local, activity_weekday_local))
 names(merged_final)
 
-summary(merged_final)
+# rename the column
+merged_final <- merged_final %>%
+  rename(device_type = activity_device_type) %>%
+  relocate(device_type, .after = date_local)
+
+names(merged_final)
 
 data <- merged_final
 
@@ -862,7 +871,7 @@ length(unique(clean_data$participantid))
 
 summary(clean_data)
 
-write.csv(clean_data, "SMMS_5days_SD_Aug20.csv")
+write.csv(clean_data, "SMMS_5days_SD_Aug22.csv")
 
 
 
