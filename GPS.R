@@ -75,7 +75,7 @@ gps <- gps %>%
 # Keep only necessary columns 
 gpsa <- gps[
   , c(
-    "participantid", "measuredat", "uploadedat", "value0", "lat", "lon",
+    "participantid", "uploadedat", "value0", "lat", "lon",
     "measuredat_local", "timezone_difference"
   )
 ]
@@ -91,7 +91,7 @@ gpsa <- gps[
 # take the log of the sum of the variances to compute location variance
 gps_loc_var_daily <- gpsa %>%
   mutate(
-    measured_date = as.Date(measuredat)        
+    measured_date = as.Date(measuredat_local)        
   ) %>%
   group_by(participantid, measured_date) %>% 
   filter(n() > 1) %>%  
@@ -102,14 +102,13 @@ gps_loc_var_daily <- gpsa %>%
 
 
 
-
 # Total Haversine Distance Computation
 
 # Haversine distance = shortest distance between two points on a sphere
 # calculate pairwise Haversine distances between consecutive points
 # and sum them up to get total haversine distance per participant
 gps_haversine_daily <- gpsa %>%
-  mutate(measured_date = as.Date(measuredat)) %>%
+  mutate(measured_date = as.Date(measuredat_local)) %>%
   group_by(participantid, measured_date) %>%
   filter(n() > 1) %>%
   filter(!is.na(lat) & !is.na(lon)) %>%  # Remove rows with missing lat or lon
@@ -126,14 +125,13 @@ gps_haversine_daily <- gpsa %>%
 
 
 
-
 # Detection of Stay Points
 
 # mark "stay clusters" where a participant has stayed within 20 meters of 
 # another location for at least 10 minutes.
 detected_stay_points <- gpsa %>%
   mutate(
-    measured_date = as.Date(measuredat), 
+    measured_date = as.Date(measuredat_local), 
     time_spent_there = difftime(lead(measuredat_local), measuredat_local, units = "secs")
   ) %>%
   group_by(participantid, measured_date) %>%
@@ -153,6 +151,10 @@ detected_stay_points <- gpsa %>%
 
 table(detected_stay_points$stay_cluster)
 
+
+
+
+
 # Now compute daily number of stay points per person
 gps_stay_points_daily <- detected_stay_points %>%
   filter(stay_cluster == TRUE) %>%  
@@ -164,7 +166,6 @@ gps_stay_points_daily <- detected_stay_points %>%
     number_of_stay_points = n_distinct(stay_point_id),  
     .groups = "drop"
   ) 
-
 
 
 
@@ -187,6 +188,7 @@ gps_loc_entropy_daily <- detected_stay_points %>%
     ),
     .groups = "drop"
   )
+
 
 
 ################################################################################
@@ -287,6 +289,7 @@ gps_stay_points_daily <- gps_stay_points_daily  %>% arrange(participantid, measu
 
 
 
+
 ################################################################################
 ############### Merge all Features into a Single Dataframe #####################
 ################################################################################
@@ -318,7 +321,6 @@ gps_features_daily <- gps_features_daily %>%
   )
 
 append_to_db(gps_features_daily, "user1_workspace", "daily_gps_features")
-
 
 
 
