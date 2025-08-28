@@ -270,7 +270,7 @@ results <- lapply(1:5, function(outer_fold) {
 # ---- Diagnostics ----
 sapply(results, function(r) r$acc)           # accuracy per fold
 sapply(results, function(r) r$best_alpha)    # best alpha per fold
-sapply(results, function(r) r$nonzero_total) # number of features kept
+sapply(results, function(r) r$nonzero_total) # 
 
 
 
