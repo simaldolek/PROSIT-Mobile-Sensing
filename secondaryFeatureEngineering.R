@@ -82,100 +82,7 @@ aggregated_data <- extract_features(data, id_col = "participantid")
 names(aggregated_data)
 summary(aggregated_data)
 
-
-################################################################################
-########### Huber Normalization on Aggregated Features  ########################
-################################################################################
-
-# Simple Huber normalization for one vector (no fallback; preserves NAs)
-huber_normalize_simple <- function(x) {
-  x <- as.numeric(x)
-  idx <- is.finite(x) & !is.na(x)
-  # huber() cannot handle NA/Inf, so fit on finite, non-NA values only
-  h <- huber(x[idx])                    # may error if MAD == 0 etc.
-  z <- x
-  z[idx] <- (x[idx] - h$mu) / h$s
-  z
-}
-
-# Apply to all numeric columns in a data.frame
-# - Overwrites columns in df
-# - Skips columns that error; prints their names
-# - Returns list with updated df + vector of skipped columns
-
-
-huber_normalize_df <- function(df, exclude = c(
-  "available_days", "emo_symptoms_baseline","hyperactivity_baseline","conduct_probs_baseline",
-  "peer_probs_baseline","prosocial_baseline",
-  "emo_symptoms_followup","hyperactivity_followup","conduct_probs_followup",
-  "peer_probs_followup","prosocial_followup"
-)) {
-  numeric_cols <- setdiff(names(df)[sapply(df, is.numeric)], exclude)
-  
-  skipped <- character(0)
-  normalized <- character(0)
-  
-  for (col in numeric_cols) {
-    vals <- df[[col]]
-    
-    # Explicit check for constant or all-NA columns
-    if (all(is.na(vals)) || mad(vals, na.rm = TRUE) == 0) {
-      message(sprintf("Skipping column '%s': all NA or MAD = 0", col))
-      skipped <- c(skipped, col)
-      next
-    }
-    
-    # Try normalization, catch real errors
-    tryCatch({
-      df[[col]] <- huber_normalize_simple(vals)
-      normalized <- c(normalized, col)
-    }, error = function(e) {
-      message(sprintf("Skipping column '%s': %s", col, conditionMessage(e)))
-      skipped <- c(skipped, col)
-    })
-  }
-  
-  message(sprintf("Huber-normalized %d numeric columns. Skipped %d.",
-                  length(unique(normalized)), length(unique(skipped))))
-  
-  list(
-    data = df,
-    skipped = unique(skipped),
-    normalized = unique(normalized),
-    excluded = intersect(exclude, names(df))
-  )
-}
-
-
-
-aggregated_data_and <- dplyr::filter(aggregated_data, device_type == "android")
-aggregated_data_ios <- dplyr::filter(aggregated_data, device_type == "ios")
-
-res_and <-huber_normalize_df(aggregated_data_and)
-res_ios <-huber_normalize_df(aggregated_data_ios)
-
-data_norm_and <- res_and$data
-data_norm_ios <- res_ios$data
-
-res_and$skipped
-res_ios$skipped # columns where huber() failed (e.g., MAD==0)
-cols_to_remove <- union(res_and$skipped, res_ios$skipped)
-cols_to_remove
-
-# remove all skipped features since MAD = 0 (not valuable for classification)
-data_norm_and_clean <- data_norm_and[ , !(names(data_norm_and) %in% cols_to_remove)]
-data_norm_ios_clean <- data_norm_ios[ , !(names(data_norm_ios) %in% cols_to_remove)]
-
-data_norm <- bind_rows(
-  data_norm_and_clean,
-  data_norm_ios_clean
-)
-
-# Sort by participantid 
-data_norm <- data_norm %>%
-  arrange(participantid)
-
-View(data_norm)
+data <- aggregated_data
 
 ################################################################################
 ########### SDQ Clinical Cutoffs to Categorize PIDs into Groups  ###############
@@ -218,7 +125,7 @@ sdq_cat_prosocial <- function(x) dplyr::case_when(
 )
 
 # add 10 categorical columns at the end
-data_norm <- data_norm %>%
+data <- data %>%
   mutate(
     emo_symptoms_baseline_cat    = factor(sdq_cat_emo(emo_symptoms_baseline),
                                           levels = c("normal","borderline","abnormal"), ordered = TRUE),
@@ -243,7 +150,7 @@ data_norm <- data_norm %>%
   )
 
 
-View(data_norm)
+View(data)
 
-write.csv(data_norm, "SMMS_aggregated_full_features_SD_Aug22.csv")
+write.csv(data, "SMMS_aggregated_full_features_SD_Aug28.csv")
 
