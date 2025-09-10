@@ -5,6 +5,11 @@ library(purrr)
 library(stringr)
 library(tidyr)
 library(tibble)
+library(glmnet)
+library(caret)
+library(MASS)
+library(randomForest)
+library(xgboost)
 
 data <- read.csv("SMMS_aggregated_full_features_SD_Aug28.csv")
 
@@ -155,48 +160,10 @@ kw_df_desc <- kw_df[order(-kw_df$eps2), ]
 
 
 
-
 ################################################################################
-####################### Multinomial Logistic Regression ########################
+############################# HELPER FUNCTIONS #################################
 ################################################################################
 
-# Multinomial Elastic Net with nested CV, topN KW features, fold-internal Huber,
-# train-median imputation, and class×device upsampling (no leakage)
-
-
-library(glmnet)
-library(caret)
-library(MASS)  # huber()
-
-set.seed(26)
-
-# -----------------------------
-# Preconditions / setup
-# -----------------------------
-# Ensure outcome is a factor with consistent ordering
-data$hyperactivity_baseline_cat <- factor(
-  data$hyperactivity_baseline_cat,
-  levels = c("normal", "borderline", "abnormal")
-)
-
-# Force device_type to be a simple two-level factor 
-data$device_type <- factor(as.character(data$device_type))
-
-#  precomputed KW ranking (descending by eps2)
-ordered_feats <- kw_df_desc$feature
-
-# Keep only those KW-ranked features that are actually numeric in current `data`
-all_numeric <- names(data)[sapply(data, is.numeric)]
-ordered_numeric <- ordered_feats[ordered_feats %in% all_numeric]
-
-# Stratification label: outcome × device
-data$y_dev <- interaction(data$hyperactivity_baseline_cat, data$device_type, drop = TRUE)
-
-# -----------------------------
-# Helpers (used INSIDE folds)
-# -----------------------------
-
-# Safe Huber fit (returns mu, s)
 # If too few points or zero spread, fall back to median and MAD
 huber_fit <- function(x) {
   x <- x[is.finite(x)]
@@ -300,6 +267,96 @@ sample_weights <- function(y, power = 1) {
   unname(cw[as.character(y)])
 }
 
+
+# Extract a 1D importance vector (names = features), prefer MeanDecreaseGini
+get_imp_vec <- function(rf_obj) {
+  imp <- try(importance(rf_obj), silent = TRUE)
+  if (inherits(imp, "try-error")) return(setNames(numeric(0), character(0)))
+  if (is.matrix(imp) && "MeanDecreaseGini" %in% colnames(imp)) {
+    v <- imp[, "MeanDecreaseGini"]
+  } else if (is.matrix(imp)) {
+    v <- imp[, ncol(imp)]
+  } else {
+    v <- imp
+  }
+  v[is.na(v)] <- 0
+  v
+}
+
+# Average multiple importance vectors (union features; missing → 0)
+average_importance <- function(imp_list) {
+  all_feats <- unique(unlist(lapply(imp_list, names)))
+  if (length(all_feats) == 0) return(setNames(numeric(0), character(0)))
+  M <- do.call(cbind, lapply(imp_list, function(v) {
+    out <- setNames(numeric(length(all_feats)), all_feats)
+    out[names(v)] <- v
+    out
+  }))
+  rowMeans(M, na.rm = TRUE)
+}
+
+# Elbow via cumulative-importance threshold (≥ threshold), enforce min_k and ≥ mtry
+compute_k_elbow <- function(imp_vec, threshold = 0.90, min_k = 10, mtry = 1) {
+  if (length(imp_vec) == 0) return(0L)
+  s <- sort(imp_vec, decreasing = TRUE); s[is.na(s)] <- 0
+  tot <- sum(s); if (tot <= 0) return(0L)
+  cs <- cumsum(s) / tot
+  k  <- which(cs >= threshold)[1]; if (is.na(k)) k <- length(s)
+  k  <- max(k, min_k, mtry)
+  k  <- min(k, length(s))
+  as.integer(k)
+}
+
+# Confusion matrix helper: ensure same factor levels for pred & truth
+make_cm <- function(pred, truth) {
+  # For multiclass, caret::confusionMatrix handles without 'positive'
+  caret::confusionMatrix(factor(pred, levels = levels(truth)), truth)
+}
+
+
+# Safe XGB prediction: prefer best_ntreelimit (when ES is used), silence warnings
+xgb_pred <- function(model, dmat, best_ntree = NULL, best_it = NULL) {
+  if (!is.null(best_ntree)) return(suppressWarnings(predict(model, dmat, ntreelimit = as.integer(best_ntree))))
+  if (!is.null(best_it))    return(suppressWarnings(predict(model, dmat, ntreelimit = as.integer(best_it))))
+  suppressWarnings(predict(model, dmat))
+}
+
+
+# Extract a named Gain vector from an xgb model
+xgb_gain_vec <- function(model, feature_names) {
+  imp <- try(xgb.importance(model = model, feature_names = feature_names), silent = TRUE)
+  if (inherits(imp, "try-error") || is.null(imp) || !nrow(imp)) {
+    return(setNames(numeric(0), character(0)))
+  }
+  setNames(imp$Gain, imp$Feature)
+}
+
+################################################################################
+####################### Multinomial Logistic Regression ########################
+################################################################################
+set.seed(26)
+
+# -----------------------------
+# Preconditions / setup
+# -----------------------------
+# Ensure outcome is a factor with consistent ordering
+data$hyperactivity_baseline_cat <- factor(
+  data$hyperactivity_baseline_cat,
+  levels = c("normal", "borderline", "abnormal")
+)
+
+# Force device_type to be a simple two-level factor 
+data$device_type <- factor(as.character(data$device_type))
+
+#  precomputed KW ranking (descending by eps2)
+ordered_feats <- kw_df_desc$feature
+
+# Keep only those KW-ranked features that are actually numeric in current `data`
+all_numeric <- names(data)[sapply(data, is.numeric)]
+ordered_numeric <- ordered_feats[ordered_feats %in% all_numeric]
+
+# Stratification label: outcome × device
+data$y_dev <- interaction(data$hyperactivity_baseline_cat, data$device_type, drop = TRUE)
 
 # -----------------------------
 # Nested CV  (weighted, no upsampling)
@@ -512,8 +569,6 @@ best_alpha <- sapply(results, `[[`, "best_alpha")
 best_topN  <- sapply(results, `[[`, "best_topN")
 nz_total   <- sapply(results, `[[`, "nonzero_total")
 
-library(tibble)
-
 selected_summary <- tibble(
   fold     = seq_along(results),
   acc      = sapply(results, `[[`, "acc"),
@@ -584,8 +639,8 @@ feature_stability <- tidy_per_fold %>%
 head(feature_stability, 20)
 
 # 6)Write to CSV for reporting
-write.csv(feature_stability, "feature_stability_across_folds.csv", row.names = FALSE)
-write.csv(tidy_per_fold, "features_by_fold_long.csv", row.names = FALSE)
+#write.csv(feature_stability, "feature_stability_across_folds.csv", row.names = FALSE)
+#write.csv(tidy_per_fold, "features_by_fold_long.csv", row.names = FALSE)
 
 # 7)Show, for each fold, the exact feature list
 split(tidy_per_fold$feature, tidy_per_fold$fold)
@@ -600,72 +655,13 @@ split(tidy_per_fold$feature, tidy_per_fold$fold)
 ################################################################################
 ####################### Random Forest : Model A & B (class weights) ###########
 ################################################################################
-
 # Model A (KW-only): tunes topN, ntree, mtry using KW-ranked numeric features
 # Model B (KW + RF-pruning): KW pool → RF importance → elbow-pruned top-k
 
-library(randomForest)
 set.seed(26)
-
-# Preconditions (already in workspace):
-# - data$hyperactivity_baseline_cat : factor with 3 levels
-# - data$device_type                : factor (ios/android)
-# - ordered_numeric                 : KW-ranked numeric features (descending ε²)
-# - helper fns: impute_by_train_median, class_weight_vec, sample_weights, get_imp_vec,
-#               average_importance, compute_k_elbow, make_cm
 
 # Stratification label (class × device) for CV splits
 data$y_dev <- interaction(data$hyperactivity_baseline_cat, data$device_type, drop = TRUE)
-
-
-#========================
-# Helpers
-#========================
-
-# Extract a 1D importance vector (names = features), prefer MeanDecreaseGini
-get_imp_vec <- function(rf_obj) {
-  imp <- try(importance(rf_obj), silent = TRUE)
-  if (inherits(imp, "try-error")) return(setNames(numeric(0), character(0)))
-  if (is.matrix(imp) && "MeanDecreaseGini" %in% colnames(imp)) {
-    v <- imp[, "MeanDecreaseGini"]
-  } else if (is.matrix(imp)) {
-    v <- imp[, ncol(imp)]
-  } else {
-    v <- imp
-  }
-  v[is.na(v)] <- 0
-  v
-}
-
-# Average multiple importance vectors (union features; missing → 0)
-average_importance <- function(imp_list) {
-  all_feats <- unique(unlist(lapply(imp_list, names)))
-  if (length(all_feats) == 0) return(setNames(numeric(0), character(0)))
-  M <- do.call(cbind, lapply(imp_list, function(v) {
-    out <- setNames(numeric(length(all_feats)), all_feats)
-    out[names(v)] <- v
-    out
-  }))
-  rowMeans(M, na.rm = TRUE)
-}
-
-# Elbow via cumulative-importance threshold (≥ threshold), enforce min_k and ≥ mtry
-compute_k_elbow <- function(imp_vec, threshold = 0.90, min_k = 10, mtry = 1) {
-  if (length(imp_vec) == 0) return(0L)
-  s <- sort(imp_vec, decreasing = TRUE); s[is.na(s)] <- 0
-  tot <- sum(s); if (tot <= 0) return(0L)
-  cs <- cumsum(s) / tot
-  k  <- which(cs >= threshold)[1]; if (is.na(k)) k <- length(s)
-  k  <- max(k, min_k, mtry)
-  k  <- min(k, length(s))
-  as.integer(k)
-}
-
-# Confusion matrix helper: ensure same factor levels for pred & truth
-make_cm <- function(pred, truth) {
-  # For multiclass, caret::confusionMatrix handles without 'positive'
-  caret::confusionMatrix(factor(pred, levels = levels(truth)), truth)
-}
 
 #========================
 # Grids / CV
@@ -973,16 +969,7 @@ pooled_cm_B
 ################################################################################
 ############################### XGBoost: Model A (KW Only, class weights) #####
 ################################################################################
-
-library(xgboost)
 set.seed(26)
-
-# Safe XGB prediction: prefer best_ntreelimit (when ES is used), silence warnings
-xgb_pred <- function(model, dmat, best_ntree = NULL, best_it = NULL) {
-  if (!is.null(best_ntree)) return(suppressWarnings(predict(model, dmat, ntreelimit = as.integer(best_ntree))))
-  if (!is.null(best_it))    return(suppressWarnings(predict(model, dmat, ntreelimit = as.integer(best_it))))
-  suppressWarnings(predict(model, dmat))
-}
 
 K_OUTER <- 10
 K_INNER <- 3
@@ -1186,17 +1173,7 @@ print(ci95_poolA)
 ################################################################################
 ############ XGBoost: Model B (KW + XGB importance + elbow pruning, weights) ###
 ################################################################################
-
 set.seed(26)
-
-# Extract a named Gain vector from an xgb model
-xgb_gain_vec <- function(model, feature_names) {
-  imp <- try(xgb.importance(model = model, feature_names = feature_names), silent = TRUE)
-  if (inherits(imp, "try-error") || is.null(imp) || !nrow(imp)) {
-    return(setNames(numeric(0), character(0)))
-  }
-  setNames(imp$Gain, imp$Feature)
-}
 
 # (reuse xgb_pred defined above)
 
